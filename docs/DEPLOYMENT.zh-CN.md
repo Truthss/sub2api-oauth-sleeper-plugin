@@ -73,6 +73,12 @@ docker compose ps
 curl http://127.0.0.1:8080/health
 ```
 
+如果当前 shell 配置了 `http_proxy` / `https_proxy`，本机健康检查要绕过代理：
+
+```bash
+NO_PROXY=127.0.0.1,localhost curl http://127.0.0.1:8080/health
+```
+
 通过反代访问时：
 
 ```bash

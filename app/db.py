@@ -18,10 +18,16 @@ async def init_db(settings: Settings) -> None:
         await conn.execute(sql)
         await conn.execute(
             """
-            INSERT INTO plugin_oauth_sleeper_settings (
-                id, threshold_percent, scan_interval_seconds, include_openai, include_anthropic
-            ) VALUES (1, $1, $2, $3, $4)
-            ON CONFLICT (id) DO NOTHING
+            UPDATE plugin_oauth_sleeper_settings
+            SET threshold_percent=$1,
+                scan_interval_seconds=$2,
+                include_openai=$3,
+                include_anthropic=$4,
+                updated_at=NOW()
+            WHERE id=1
+              AND last_scan_at IS NULL
+              AND last_scan_scanned = 0
+              AND last_scan_triggered = 0
             """,
             settings.default_sleep_threshold_percent,
             settings.scan_interval_seconds,

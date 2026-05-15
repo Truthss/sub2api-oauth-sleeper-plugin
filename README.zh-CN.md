@@ -131,6 +131,12 @@ curl http://127.0.0.1:8080/health
 
 注意：默认 `docker-compose.yml` 不暴露宿主机端口。生产环境建议通过已有 Caddy / Nginx 反代访问。
 
+如果当前 shell 配置了 `http_proxy` / `https_proxy`，本机健康检查要绕过代理：
+
+```bash
+NO_PROXY=127.0.0.1,localhost curl http://127.0.0.1:8080/health
+```
+
 ## Caddy 反代示例
 
 以下示例把插件挂载到 `/custom/oauth-sleeper`：

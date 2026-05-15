@@ -110,6 +110,12 @@ curl http://127.0.0.1:8080/health
 
 The compose file does not publish a host port by default. Expose it through your existing reverse proxy, or add a `ports:` mapping for local testing.
 
+If your shell has `http_proxy` / `https_proxy` set, bypass proxies for local checks:
+
+```bash
+NO_PROXY=127.0.0.1,localhost curl http://127.0.0.1:8080/health
+```
+
 ## Reverse proxy examples
 
 ### Caddy path mount

@@ -38,6 +38,19 @@ handle /custom/oauth-sleeper* {
 }
 ```
 
+## Verification
+
+```bash
+docker compose ps
+curl http://127.0.0.1:8080/health
+```
+
+If your shell has `http_proxy` / `https_proxy` set, bypass proxies for local checks:
+
+```bash
+NO_PROXY=127.0.0.1,localhost curl http://127.0.0.1:8080/health
+```
+
 ## Security
 
 This project intentionally has no built-in authentication in the open-source default. Keep it on a trusted LAN/VPN or add authentication at your reverse proxy.
