@@ -1,0 +1,15 @@
+services:
+  oauth-sleeper-plugin:
+    build: .
+    image: sub2api-oauth-sleeper-plugin:local
+    container_name: sub2api-oauth-sleeper-plugin
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - sub2api-network
+
+networks:
+  sub2api-network:
+    external: true
+    name: ${SUB2API_DOCKER_NETWORK:-sub2api_sub2api-network}
