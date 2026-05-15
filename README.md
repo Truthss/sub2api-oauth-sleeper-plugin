@@ -1,5 +1,7 @@
 # Sub2API OAuth Sleeper Plugin
 
+[中文文档](README.zh-CN.md)
+
 A sidecar admin page for Sub2API that proactively marks OAuth accounts as rate-limited when their recorded official usage windows reach a configurable threshold.
 
 This project is intended for private LAN / trusted-admin deployments. It directly reads and writes the Sub2API PostgreSQL database; it does not call OpenAI, Anthropic, or Sub2API admin APIs.

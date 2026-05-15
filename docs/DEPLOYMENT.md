@@ -1,5 +1,7 @@
 # Deployment Notes
 
+[中文部署说明](DEPLOYMENT.zh-CN.md)
+
 This project is designed as a sidecar next to an existing Sub2API deployment.
 
 ## Safe deployment principle
