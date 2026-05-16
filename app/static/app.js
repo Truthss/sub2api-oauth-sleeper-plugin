@@ -2,21 +2,13 @@ const headers = () => ({ 'Content-Type': 'application/json' });
 const $ = id => document.getElementById(id);
 const PAGE_SIZE = 10;
 const state = { sleepingPage: 1, eventsPage: 1 };
-const basePath = (() => {
-  const configured = (window.OAUTH_SLEEPER_BASE_PATH || '').trim().replace(/\/$/, '');
-  if (configured) return configured;
-  const path = window.location.pathname.replace(/\/$/, '');
-  if (path.endsWith('/admin')) return path.slice(0, -'/admin'.length);
-  return path;
-})();
 function rel(path){ return path.replace(/^\//, ''); }
-function apiUrl(path){ return `${basePath}/${rel(path)}`; }
 function fmt(t){ return t ? new Date(t).toLocaleString() : '-'; }
 function pct(v){ return `${Number(v || 0).toFixed(2)}%`; }
 function esc(v){ return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 function msg(s, bad=false){ const el=$('message'); el.textContent=s; el.style.color=bad?'#b91c1c':'#065f46'; }
 async function api(path, opts={}){
-  const r = await fetch(apiUrl(path), { ...opts, headers: { ...headers(), ...(opts.headers||{}) }});
+  const r = await fetch(`/custom/oauth-sleeper/${rel(path)}`, { ...opts, headers: { ...headers(), ...(opts.headers||{}) }});
   if(!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return await r.json();
 }
@@ -24,6 +16,7 @@ function fillSettings(s){
   $('enabled').checked = s.enabled;
   $('threshold').value = s.threshold_percent;
   $('interval').value = s.scan_interval_seconds;
+  $('maxSleep').value = s.max_sleep_per_scan;
   $('includeOpenai').checked = s.include_openai;
   $('includeAnthropic').checked = s.include_anthropic;
   $('enabledStat').textContent = s.enabled ? '已启用' : '已关闭';
@@ -60,6 +53,7 @@ async function save(){
     enabled: $('enabled').checked,
     threshold_percent: Number($('threshold').value),
     scan_interval_seconds: Number($('interval').value),
+    max_sleep_per_scan: Number($('maxSleep').value),
     include_openai: $('includeOpenai').checked,
     include_anthropic: $('includeAnthropic').checked,
   };

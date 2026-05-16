@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import socket
+import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -121,12 +122,9 @@ def select_sleep_candidates(
     now: datetime,
     platform: str,
     max_sleep_per_scan: int,
-    min_remaining_accounts: int,
 ) -> list[tuple[dict[str, Any], Decision]]:
-    """Return safe sleep candidates without reducing a platform pool below its floor."""
+    """Return sleep candidates capped by the configured per-scan limit."""
     platform_accounts = [a for a in accounts if a.get("platform") == platform]
-    if len(platform_accounts) <= min_remaining_accounts:
-        return []
     candidates: list[tuple[dict[str, Any], Decision]] = []
     for account in platform_accounts:
         decision = evaluate_account(account, threshold, now)
@@ -138,8 +136,7 @@ def select_sleep_candidates(
             if prev_dt is not None and prev_dt >= decision.reset_at:
                 continue
         candidates.append((account, decision))
-    allowed_by_floor = max(0, len(platform_accounts) - min_remaining_accounts)
-    limit = min(max_sleep_per_scan, allowed_by_floor)
+    limit = max(0, max_sleep_per_scan)
     candidates.sort(key=lambda item: (item[1].utilization_percent, item[1].reset_at), reverse=True)
     return candidates[:limit]
 
@@ -260,9 +257,7 @@ async def scan_once(force: bool = False) -> ScanResult:
             return ScanResult(scanned=0, triggered=0, events=[])
         accounts = await repo.list_oauth_accounts(settings.include_openai, settings.include_anthropic)
         now = _now()
-        max_sleep_per_scan = _env_int("MAX_SLEEP_PER_SCAN", 3)
-        min_remaining_openai = _env_int("MIN_REMAINING_OPENAI_ACCOUNTS", 40)
-        min_remaining_anthropic = _env_int("MIN_REMAINING_ANTHROPIC_ACCOUNTS", 5)
+        max_sleep_per_scan = settings.max_sleep_per_scan
         selected: list[tuple[dict[str, Any], Decision]] = []
         if settings.include_openai:
             selected.extend(
@@ -272,7 +267,6 @@ async def scan_once(force: bool = False) -> ScanResult:
                     now,
                     "openai",
                     max_sleep_per_scan,
-                    min_remaining_openai,
                 )
             )
         if settings.include_anthropic:
@@ -283,7 +277,6 @@ async def scan_once(force: bool = False) -> ScanResult:
                     now,
                     "anthropic",
                     max_sleep_per_scan,
-                    min_remaining_anthropic,
                 )
             )
         events: list[SleeperEvent] = []

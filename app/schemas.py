@@ -33,6 +33,7 @@ class SettingsOut(BaseModel):
     enabled: bool
     threshold_percent: float
     scan_interval_seconds: int
+    max_sleep_per_scan: int = 3
     include_openai: bool
     include_anthropic: bool
     last_scan_at: datetime | None = None
@@ -44,6 +45,7 @@ class SettingsUpdate(BaseModel):
     enabled: bool
     threshold_percent: float = Field(gt=0, le=100)
     scan_interval_seconds: int = Field(ge=15, le=3600)
+    max_sleep_per_scan: int = Field(ge=0, le=100)
     include_openai: bool = True
     include_anthropic: bool = True
 
@@ -58,6 +60,7 @@ class StatusOut(BaseModel):
     enabled: bool
     threshold_percent: float
     scan_interval_seconds: int
+    max_sleep_per_scan: int = 3
     include_openai: bool
     include_anthropic: bool
     last_scan_at: datetime | None = None

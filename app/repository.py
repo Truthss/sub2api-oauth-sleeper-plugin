@@ -44,6 +44,7 @@ async def get_settings() -> SettingsOut:
         enabled=r["enabled"],
         threshold_percent=float(r["threshold_percent"]),
         scan_interval_seconds=r["scan_interval_seconds"],
+        max_sleep_per_scan=r["max_sleep_per_scan"],
         include_openai=r["include_openai"],
         include_anthropic=r["include_anthropic"],
         last_scan_at=r["last_scan_at"],
@@ -60,14 +61,16 @@ async def update_settings(data: SettingsUpdate) -> SettingsOut:
             SET enabled=$1,
                 threshold_percent=$2,
                 scan_interval_seconds=$3,
-                include_openai=$4,
-                include_anthropic=$5,
+                max_sleep_per_scan=$4,
+                include_openai=$5,
+                include_anthropic=$6,
                 updated_at=NOW()
             WHERE id=1
             """,
             data.enabled,
             data.threshold_percent,
             data.scan_interval_seconds,
+            data.max_sleep_per_scan,
             data.include_openai,
             data.include_anthropic,
         )

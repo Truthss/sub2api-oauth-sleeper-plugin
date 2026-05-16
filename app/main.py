@@ -3,8 +3,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
@@ -49,14 +49,28 @@ async def health():
 
 @app.get("/admin")
 async def admin_page():
-    settings = get_settings()
-    base_path = settings.public_base_path.rstrip("/")
-    text = (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace(
-        "window.OAUTH_SLEEPER_BASE_PATH = document.currentScript.dataset.basePath || '';",
-        f"window.OAUTH_SLEEPER_BASE_PATH = {base_path!r};",
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
-    return HTMLResponse(
-        text,
+
+
+@app.get("/static/app.js")
+async def app_js(request: Request):
+    content = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    return Response(
+        content,
+        media_type="text/javascript; charset=utf-8",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.get("/static/style.css")
+async def style_css(request: Request):
+    content = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+    return Response(
+        content,
+        media_type="text/css; charset=utf-8",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
 
@@ -94,6 +108,7 @@ async def status_api():
         enabled=s.enabled,
         threshold_percent=s.threshold_percent,
         scan_interval_seconds=s.scan_interval_seconds,
+        max_sleep_per_scan=s.max_sleep_per_scan,
         include_openai=s.include_openai,
         include_anthropic=s.include_anthropic,
         last_scan_at=s.last_scan_at,

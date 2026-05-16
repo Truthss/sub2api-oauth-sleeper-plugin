@@ -4,10 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OAuth 休眠</title>
-  <script>
-    window.OAUTH_SLEEPER_BASE_PATH = document.currentScript.dataset.basePath || '';
-  </script>
-  <link rel="stylesheet" href="static/style.css?v=20260516-1559" />
+  <link rel="stylesheet" href="/custom/oauth-sleeper/static/style.css?v=20260516-1559" />
 </head>
 <body>
   <main class="wrap">
@@ -34,6 +31,7 @@
         <label class="check"><input id="enabled" type="checkbox" /> 启用主动休眠</label>
         <label>总阈值 (%)<input id="threshold" type="number" min="1" max="100" step="0.1" /></label>
         <label>扫描间隔 / 扫描间隙 (秒)<input id="interval" type="number" min="15" max="3600" step="1" /></label>
+        <label>每轮最多休眠账号数<input id="maxSleep" type="number" min="0" max="100" step="1" /></label>
         <label class="check"><input id="includeOpenai" type="checkbox" /> OpenAI OAuth</label>
         <label class="check"><input id="includeAnthropic" type="checkbox" /> Anthropic OAuth</label>
       </div>
@@ -60,6 +58,6 @@
       <div class="tableWrap"><table><thead><tr><th>时间</th><th>ID</th><th>账号</th><th>平台</th><th>窗口</th><th>使用率</th><th>阈值</th><th>休眠到</th></tr></thead><tbody id="eventsBody"></tbody></table></div>
     </section>
   </main>
-  <script src="static/app.js?v=20260516-1559"></script>
+  <script src="/custom/oauth-sleeper/static/app.js?v=20260516-1559"></script>
 </body>
 </html>

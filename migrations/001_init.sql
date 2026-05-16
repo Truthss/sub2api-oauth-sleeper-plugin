@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS plugin_oauth_sleeper_settings (
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     threshold_percent DECIMAL(8,4) NOT NULL DEFAULT 90,
     scan_interval_seconds INTEGER NOT NULL DEFAULT 60,
+    max_sleep_per_scan INTEGER NOT NULL DEFAULT 3,
     include_openai BOOLEAN NOT NULL DEFAULT TRUE,
     include_anthropic BOOLEAN NOT NULL DEFAULT TRUE,
     last_scan_at TIMESTAMPTZ,
@@ -11,6 +12,9 @@ CREATE TABLE IF NOT EXISTS plugin_oauth_sleeper_settings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT plugin_oauth_sleeper_single_row CHECK (id = 1)
 );
+
+ALTER TABLE plugin_oauth_sleeper_settings
+ADD COLUMN IF NOT EXISTS max_sleep_per_scan INTEGER NOT NULL DEFAULT 3;
 
 INSERT INTO plugin_oauth_sleeper_settings (id)
 VALUES (1)
