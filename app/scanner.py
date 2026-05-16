@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import socket
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -110,6 +115,143 @@ def evaluate_account(account: dict[str, Any], threshold: float, now: datetime) -
     return None
 
 
+def select_sleep_candidates(
+    accounts: list[dict[str, Any]],
+    threshold: float,
+    now: datetime,
+    platform: str,
+    max_sleep_per_scan: int,
+    min_remaining_accounts: int,
+) -> list[tuple[dict[str, Any], Decision]]:
+    """Return safe sleep candidates without reducing a platform pool below its floor."""
+    platform_accounts = [a for a in accounts if a.get("platform") == platform]
+    if len(platform_accounts) <= min_remaining_accounts:
+        return []
+    candidates: list[tuple[dict[str, Any], Decision]] = []
+    for account in platform_accounts:
+        decision = evaluate_account(account, threshold, now)
+        if decision is None:
+            continue
+        prev = account.get("rate_limit_reset_at")
+        if prev is not None:
+            prev_dt = _time(prev)
+            if prev_dt is not None and prev_dt >= decision.reset_at:
+                continue
+        candidates.append((account, decision))
+    allowed_by_floor = max(0, len(platform_accounts) - min_remaining_accounts)
+    limit = min(max_sleep_per_scan, allowed_by_floor)
+    candidates.sort(key=lambda item: (item[1].utilization_percent, item[1].reset_at), reverse=True)
+    return candidates[:limit]
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+def _refresh_sub2api_scheduler(group_id: int = 2, platform: str = "openai", modes: tuple[str, ...] = ("single",)) -> None:
+    redis_host = os.getenv("SUB2API_REDIS_HOST", "redis")
+    redis_port = _env_int("SUB2API_REDIS_PORT", 6379)
+
+    def redis_command(*parts: str) -> str:
+        payload = "*" + str(len(parts)) + "\r\n" + "".join(f"${len(p.encode())}\r\n{p}\r\n" for p in parts)
+        with socket.create_connection((redis_host, redis_port), timeout=5) as sock:
+            sock.sendall(payload.encode())
+            sock.shutdown(socket.SHUT_WR)
+            return sock.recv(1024 * 1024).decode(errors="replace")
+
+    def parse_bulk(resp: str) -> str:
+        if not resp.startswith("$"):
+            return ""
+        _, rest = resp.split("\r\n", 1)
+        if rest.startswith("-1"):
+            return ""
+        return rest.split("\r\n", 1)[0]
+
+    def parse_array(resp: str) -> list[str]:
+        if not resp.startswith("*"):
+            return []
+        lines = resp.split("\r\n")
+        out: list[str] = []
+        i = 1
+        while i < len(lines):
+            if lines[i].startswith("$") and i + 1 < len(lines):
+                out.append(lines[i + 1])
+                i += 2
+            else:
+                i += 1
+        return out
+
+    keys_to_delete: list[str] = []
+    for mode in modes:
+        active_key = f"sched:active:{group_id}:{platform}:{mode}"
+        ver = parse_bulk(redis_command("GET", active_key))
+        keys_to_delete.extend([
+            active_key,
+            f"sched:ready:{group_id}:{platform}:{mode}",
+            f"sched:ver:{group_id}:{platform}:{mode}",
+            f"sched:lock:{group_id}:{platform}:{mode}",
+        ])
+        if ver:
+            keys_to_delete.append(f"sched:{group_id}:{platform}:{mode}:v{ver}")
+    cursor = "0"
+    pattern = f"sticky_session:{group_id}:{platform}:*"
+    while True:
+        resp = redis_command("SCAN", cursor, "MATCH", pattern, "COUNT", "100")
+        arr = parse_array(resp)
+        if not arr:
+            break
+        cursor = arr[0]
+        keys_to_delete.extend(arr[1:])
+        if cursor == "0":
+            break
+    if keys_to_delete:
+        redis_command("DEL", *keys_to_delete)
+
+
+def _verify_sub2api_model() -> bool:
+    url = os.getenv("VERIFY_API_URL", "").strip()
+    api_key = os.getenv("VERIFY_API_KEY", "").strip()
+    model = os.getenv("VERIFY_MODEL", "gpt-5.5").strip()
+    if not url or not api_key:
+        return True
+    payload = json.dumps({"model": model, "messages": [{"role": "user", "content": "只回复 OK"}], "max_tokens": 20}).encode()
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return 200 <= resp.status < 300
+    except Exception:
+        return False
+
+
+async def _rollback_sleeps(account_ids: list[int]) -> None:
+    if not account_ids:
+        return
+    async with repo.pool().acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE accounts
+            SET rate_limited_at=NULL, rate_limit_reset_at=NULL, updated_at=NOW()
+            WHERE id = ANY($1::bigint[])
+            """,
+            account_ids,
+        )
+
+
 async def scan_once(force: bool = False) -> ScanResult:
     async with _scan_lock:
         settings = await repo.get_settings()
@@ -118,19 +260,40 @@ async def scan_once(force: bool = False) -> ScanResult:
             return ScanResult(scanned=0, triggered=0, events=[])
         accounts = await repo.list_oauth_accounts(settings.include_openai, settings.include_anthropic)
         now = _now()
+        max_sleep_per_scan = _env_int("MAX_SLEEP_PER_SCAN", 3)
+        min_remaining_openai = _env_int("MIN_REMAINING_OPENAI_ACCOUNTS", 40)
+        min_remaining_anthropic = _env_int("MIN_REMAINING_ANTHROPIC_ACCOUNTS", 5)
+        selected: list[tuple[dict[str, Any], Decision]] = []
+        if settings.include_openai:
+            selected.extend(
+                select_sleep_candidates(
+                    accounts,
+                    settings.threshold_percent,
+                    now,
+                    "openai",
+                    max_sleep_per_scan,
+                    min_remaining_openai,
+                )
+            )
+        if settings.include_anthropic:
+            selected.extend(
+                select_sleep_candidates(
+                    accounts,
+                    settings.threshold_percent,
+                    now,
+                    "anthropic",
+                    max_sleep_per_scan,
+                    min_remaining_anthropic,
+                )
+            )
         events: list[SleeperEvent] = []
-        for account in accounts:
-            decision = evaluate_account(account, settings.threshold_percent, now)
-            if decision is None:
-                continue
+        updated_ids: list[int] = []
+        for account, decision in selected:
             prev = account.get("rate_limit_reset_at")
-            if prev is not None:
-                prev_dt = _time(prev)
-                if prev_dt is not None and prev_dt >= decision.reset_at:
-                    continue
             updated = await repo.set_rate_limited(account["id"], decision.reset_at)
             if not updated:
                 continue
+            updated_ids.append(account["id"])
             event = await repo.insert_event(
                 SleeperEvent(
                     account_id=account["id"],
@@ -144,6 +307,16 @@ async def scan_once(force: bool = False) -> ScanResult:
                 )
             )
             events.append(event)
+        should_refresh = _env_bool("REFRESH_SUB2API_SCHEDULER", True)
+        group_id = _env_int("SUB2API_OPENAI_GROUP_ID", 2)
+        if should_refresh:
+            _refresh_sub2api_scheduler(group_id=group_id, platform="openai", modes=("single",))
+        if updated_ids and _env_bool("VERIFY_AFTER_SLEEP", True):
+            if not _verify_sub2api_model():
+                await _rollback_sleeps(updated_ids)
+                if should_refresh:
+                    _refresh_sub2api_scheduler(group_id=group_id, platform="openai", modes=("single",))
+                events = []
         await repo.update_last_scan(len(accounts), len(events))
         return ScanResult(scanned=len(accounts), triggered=len(events), events=events)
 
