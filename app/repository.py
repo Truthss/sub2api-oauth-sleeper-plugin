@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from .db import pool
-from .schemas import SettingsOut, SettingsUpdate, SleeperEvent
+from .schemas import PageMeta, SettingsOut, SettingsUpdate, SleeperEvent, SleeperEventPage
 
 
 def _f(v: Any) -> float | None:
@@ -160,28 +160,84 @@ async def insert_event(event: SleeperEvent) -> SleeperEvent:
     return _event_from_record(r)
 
 
-async def list_events(limit: int = 50) -> list[SleeperEvent]:
-    limit = max(1, min(limit, 200))
+def _page_meta(total: int, page: int, page_size: int) -> PageMeta:
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return PageMeta(total=total, page=page, page_size=page_size, total_pages=total_pages)
+
+
+async def list_events_page(page: int = 1, page_size: int = 10) -> SleeperEventPage:
+    page = max(1, page)
+    page_size = max(1, min(page_size, 10))
+    offset = (page - 1) * page_size
     async with pool().acquire() as conn:
+        total = await conn.fetchval("SELECT COUNT(*) FROM plugin_oauth_sleeper_events")
         rows = await conn.fetch(
-            "SELECT * FROM plugin_oauth_sleeper_events ORDER BY created_at DESC LIMIT $1",
-            limit,
+            """
+            SELECT *
+            FROM plugin_oauth_sleeper_events
+            ORDER BY created_at DESC, id DESC
+            LIMIT $1 OFFSET $2
+            """,
+            page_size,
+            offset,
         )
-    return [_event_from_record(r) for r in rows]
+    return SleeperEventPage(items=[_event_from_record(r) for r in rows], meta=_page_meta(int(total or 0), page, page_size))
+
+
+async def count_sleeping_accounts() -> int:
+    async with pool().acquire() as conn:
+        total = await conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM (
+                SELECT DISTINCT e.account_id
+                FROM plugin_oauth_sleeper_events e
+                JOIN accounts a ON a.id = e.account_id
+                WHERE a.deleted_at IS NULL
+                  AND a.rate_limit_reset_at > NOW()
+            ) s
+            """
+        )
+    return int(total or 0)
+
+
+async def list_sleeping_accounts_page(page: int = 1, page_size: int = 10) -> SleeperEventPage:
+    page = max(1, page)
+    page_size = max(1, min(page_size, 10))
+    offset = (page - 1) * page_size
+    async with pool().acquire() as conn:
+        total = await conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM (
+                SELECT DISTINCT e.account_id
+                FROM plugin_oauth_sleeper_events e
+                JOIN accounts a ON a.id = e.account_id
+                WHERE a.deleted_at IS NULL
+                  AND a.rate_limit_reset_at > NOW()
+            ) s
+            """
+        )
+        rows = await conn.fetch(
+            """
+            SELECT *
+            FROM (
+                SELECT DISTINCT ON (e.account_id)
+                    e.*
+                FROM plugin_oauth_sleeper_events e
+                JOIN accounts a ON a.id = e.account_id
+                WHERE a.deleted_at IS NULL
+                  AND a.rate_limit_reset_at > NOW()
+                ORDER BY e.account_id, e.created_at DESC, e.id DESC
+            ) latest
+            ORDER BY reset_at ASC, created_at DESC, id DESC
+            LIMIT $1 OFFSET $2
+            """,
+            page_size,
+            offset,
+        )
+    return SleeperEventPage(items=[_event_from_record(r) for r in rows], meta=_page_meta(int(total or 0), page, page_size))
 
 
 async def list_sleeping_accounts() -> list[SleeperEvent]:
-    async with pool().acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT DISTINCT ON (e.account_id)
-                e.*
-            FROM plugin_oauth_sleeper_events e
-            JOIN accounts a ON a.id = e.account_id
-            WHERE a.deleted_at IS NULL
-              AND a.rate_limit_reset_at > NOW()
-            ORDER BY e.account_id, e.created_at DESC
-            LIMIT 200
-            """
-        )
-    return [_event_from_record(r) for r in rows]
+    return (await list_sleeping_accounts_page(page=1, page_size=10)).items

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import init_db, close_db
-from .schemas import SettingsOut, SettingsUpdate, ScanResult, StatusOut, SleeperEvent
+from .schemas import SettingsOut, SettingsUpdate, ScanResult, StatusOut, SleeperEventPage
 from . import repository as repo
 from . import scanner
 
@@ -34,8 +34,11 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
+    settings = get_settings()
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Do not set frame-ancestors here. The plugin is served under the same LAN
+    # origin as Sub2API and must be embeddable by Sub2API's custom-menu iframe.
     return response
 
 
@@ -52,7 +55,10 @@ async def admin_page():
         "window.OAUTH_SLEEPER_BASE_PATH = document.currentScript.dataset.basePath || '';",
         f"window.OAUTH_SLEEPER_BASE_PATH = {base_path!r};",
     )
-    return HTMLResponse(text)
+    return HTMLResponse(
+        text,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 @app.get("/api/settings", response_model=SettingsOut)
@@ -70,15 +76,20 @@ async def scan_once_api():
     return await scanner.scan_once(force=True)
 
 
-@app.get("/api/events", response_model=list[SleeperEvent])
-async def events_api(limit: int = Query(default=50, ge=1, le=200)):
-    return await repo.list_events(limit)
+@app.get("/api/events", response_model=SleeperEventPage)
+async def events_api(page: int = Query(default=1, ge=1), page_size: int = Query(default=10, ge=1, le=10)):
+    return await repo.list_events_page(page=page, page_size=page_size)
+
+
+@app.get("/api/sleeping-accounts", response_model=SleeperEventPage)
+async def sleeping_accounts_api(page: int = Query(default=1, ge=1), page_size: int = Query(default=10, ge=1, le=10)):
+    return await repo.list_sleeping_accounts_page(page=page, page_size=page_size)
 
 
 @app.get("/api/status", response_model=StatusOut)
 async def status_api():
     s = await repo.get_settings()
-    sleeping = await repo.list_sleeping_accounts()
+    sleeping_page = await repo.list_sleeping_accounts_page(page=1, page_size=10)
     return StatusOut(
         enabled=s.enabled,
         threshold_percent=s.threshold_percent,
@@ -88,5 +99,6 @@ async def status_api():
         last_scan_at=s.last_scan_at,
         last_scan_scanned=s.last_scan_scanned,
         last_scan_triggered=s.last_scan_triggered,
-        sleeping_accounts=sleeping,
+        sleeping_count=sleeping_page.meta.total,
+        sleeping_accounts=sleeping_page.items,
     )

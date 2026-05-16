@@ -7,7 +7,7 @@
   <script>
     window.OAUTH_SLEEPER_BASE_PATH = document.currentScript.dataset.basePath || '';
   </script>
-  <link rel="stylesheet" href="static/style.css" />
+  <link rel="stylesheet" href="static/style.css?v=20260516-1559" />
 </head>
 <body>
   <main class="wrap">
@@ -25,6 +25,7 @@
       <div class="card"><div class="label">扫描间隔</div><div id="intervalStat" class="value">-</div></div>
       <div class="card"><div class="label">上次扫描</div><div id="lastScanStat" class="value small">-</div></div>
       <div class="card"><div class="label">上次触发</div><div id="triggeredStat" class="value">-</div></div>
+      <div class="card"><div class="label">休眠账号数</div><div id="sleepingCountStat" class="value">-</div></div>
     </section>
 
     <section class="panel">
@@ -44,15 +45,21 @@
     </section>
 
     <section class="panel">
-      <h2>当前插件记录的休眠账号</h2>
+      <div class="sectionHead">
+        <h2>当前插件记录的休眠账号 <span id="sleepingTotal" class="muted">加载中…</span></h2>
+        <div class="pager"><button id="sleepingPrev" class="secondary" disabled>上一页</button><span id="sleepingPageInfo">加载中…</span><button id="sleepingNext" class="secondary" disabled>下一页</button></div>
+      </div>
       <div class="tableWrap"><table><thead><tr><th>ID</th><th>账号</th><th>平台</th><th>窗口</th><th>使用率</th><th>休眠到</th></tr></thead><tbody id="sleepingBody"></tbody></table></div>
     </section>
 
     <section class="panel">
-      <h2>最近事件</h2>
+      <div class="sectionHead">
+        <h2>最近事件 <span id="eventsTotal" class="muted">加载中…</span></h2>
+        <div class="pager"><button id="eventsPrev" class="secondary" disabled>上一页</button><span id="eventsPageInfo">加载中…</span><button id="eventsNext" class="secondary" disabled>下一页</button></div>
+      </div>
       <div class="tableWrap"><table><thead><tr><th>时间</th><th>ID</th><th>账号</th><th>平台</th><th>窗口</th><th>使用率</th><th>阈值</th><th>休眠到</th></tr></thead><tbody id="eventsBody"></tbody></table></div>
     </section>
   </main>
-  <script src="static/app.js"></script>
+  <script src="static/app.js?v=20260516-1559"></script>
 </body>
 </html>

@@ -1,5 +1,7 @@
 const headers = () => ({ 'Content-Type': 'application/json' });
 const $ = id => document.getElementById(id);
+const PAGE_SIZE = 10;
+const state = { sleepingPage: 1, eventsPage: 1 };
 const basePath = (() => {
   const configured = (window.OAUTH_SLEEPER_BASE_PATH || '').trim().replace(/\/$/, '');
   if (configured) return configured;
@@ -11,14 +13,12 @@ function rel(path){ return path.replace(/^\//, ''); }
 function apiUrl(path){ return `${basePath}/${rel(path)}`; }
 function fmt(t){ return t ? new Date(t).toLocaleString() : '-'; }
 function pct(v){ return `${Number(v || 0).toFixed(2)}%`; }
+function esc(v){ return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 function msg(s, bad=false){ const el=$('message'); el.textContent=s; el.style.color=bad?'#b91c1c':'#065f46'; }
 async function api(path, opts={}){
   const r = await fetch(apiUrl(path), { ...opts, headers: { ...headers(), ...(opts.headers||{}) }});
   if(!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return await r.json();
-}
-function escapeHtml(value){
-  return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
 function fillSettings(s){
   $('enabled').checked = s.enabled;
@@ -31,18 +31,30 @@ function fillSettings(s){
   $('intervalStat').textContent = `${s.scan_interval_seconds || 0}s`;
   $('lastScanStat').textContent = fmt(s.last_scan_at);
   $('triggeredStat').textContent = `${s.last_scan_triggered || 0} / ${s.last_scan_scanned || 0}`;
+  $('sleepingCountStat').textContent = s.sleeping_count ?? 0;
 }
-function renderSleeping(items){
-  $('sleepingBody').innerHTML = items.length ? items.map(e=>`<tr><td>${escapeHtml(e.account_id)}</td><td>${escapeHtml(e.account_name)}</td><td>${escapeHtml(e.platform)}</td><td>${escapeHtml(e.window_name)}</td><td>${pct(e.utilization_percent)}</td><td>${fmt(e.reset_at)}</td></tr>`).join('') : '<tr><td colspan="6">暂无</td></tr>';
+function updatePager(prefix, meta){
+  const totalPages = meta?.total_pages || 1;
+  const page = Math.min(meta?.page || 1, totalPages);
+  $(`${prefix}Total`).textContent = `共 ${meta?.total || 0} 条`;
+  $(`${prefix}PageInfo`).textContent = `第 ${page} / ${totalPages} 页，每页最多 ${meta?.page_size || PAGE_SIZE} 条`;
+  $(`${prefix}Prev`).disabled = page <= 1;
+  $(`${prefix}Next`).disabled = page >= totalPages;
 }
-function renderEvents(items){
-  $('eventsBody').innerHTML = items.length ? items.map(e=>`<tr><td>${fmt(e.created_at)}</td><td>${escapeHtml(e.account_id)}</td><td>${escapeHtml(e.account_name)}</td><td>${escapeHtml(e.platform)}</td><td>${escapeHtml(e.window_name)}</td><td>${pct(e.utilization_percent)}</td><td>${pct(e.threshold_percent)}</td><td>${fmt(e.reset_at)}</td></tr>`).join('') : '<tr><td colspan="8">暂无</td></tr>';
+function renderSleepingPage(pageData){
+  const items = pageData.items || [];
+  $('sleepingBody').innerHTML = items.length ? items.map(e=>`<tr><td>${e.account_id}</td><td>${esc(e.account_name)}</td><td>${esc(e.platform)}</td><td>${esc(e.window_name)}</td><td>${pct(e.utilization_percent)}</td><td>${fmt(e.reset_at)}</td></tr>`).join('') : '<tr><td colspan="6">暂无</td></tr>';
+  updatePager('sleeping', pageData.meta || {total:0,page:1,page_size:PAGE_SIZE,total_pages:1});
 }
-async function load(){
-  const st = await api('api/status');
-  fillSettings(st); renderSleeping(st.sleeping_accounts || []);
-  renderEvents(await api('api/events?limit=50'));
+function renderEventsPage(pageData){
+  const items = pageData.items || [];
+  $('eventsBody').innerHTML = items.length ? items.map(e=>`<tr><td>${fmt(e.created_at)}</td><td>${e.account_id}</td><td>${esc(e.account_name)}</td><td>${esc(e.platform)}</td><td>${esc(e.window_name)}</td><td>${pct(e.utilization_percent)}</td><td>${pct(e.threshold_percent)}</td><td>${fmt(e.reset_at)}</td></tr>`).join('') : '<tr><td colspan="8">暂无</td></tr>';
+  updatePager('events', pageData.meta || {total:0,page:1,page_size:PAGE_SIZE,total_pages:1});
 }
+async function loadStatus(){ fillSettings(await api('api/status')); }
+async function loadSleeping(){ renderSleepingPage(await api(`api/sleeping-accounts?page=${state.sleepingPage}&page_size=${PAGE_SIZE}`)); }
+async function loadEvents(){ renderEventsPage(await api(`api/events?page=${state.eventsPage}&page_size=${PAGE_SIZE}`)); }
+async function load(){ await loadStatus(); await Promise.all([loadSleeping(), loadEvents()]); }
 async function save(){
   const body = {
     enabled: $('enabled').checked,
@@ -52,14 +64,18 @@ async function save(){
     include_anthropic: $('includeAnthropic').checked,
   };
   fillSettings(await api('api/settings', { method:'PUT', body: JSON.stringify(body) }));
-  msg('配置已保存'); await load();
+  msg('配置已保存'); state.sleepingPage = 1; state.eventsPage = 1; await load();
 }
 async function scan(){
   const r = await api('api/scan-once', { method:'POST' });
   msg(`扫描完成：扫描 ${r.scanned} 个，触发 ${r.triggered} 个`);
-  await load();
+  state.sleepingPage = 1; state.eventsPage = 1; await load();
 }
 $('refreshBtn').onclick = () => load().catch(e=>msg(e.message,true));
 $('saveBtn').onclick = () => save().catch(e=>msg(e.message,true));
 $('scanBtn').onclick = () => scan().catch(e=>msg(e.message,true));
+$('sleepingPrev').onclick = () => { if(state.sleepingPage > 1){ state.sleepingPage--; loadSleeping().catch(e=>msg(e.message,true)); } };
+$('sleepingNext').onclick = () => { state.sleepingPage++; loadSleeping().catch(e=>{ state.sleepingPage--; msg(e.message,true); }); };
+$('eventsPrev').onclick = () => { if(state.eventsPage > 1){ state.eventsPage--; loadEvents().catch(e=>msg(e.message,true)); } };
+$('eventsNext').onclick = () => { state.eventsPage++; loadEvents().catch(e=>{ state.eventsPage--; msg(e.message,true); }); };
 load().catch(e=>msg(e.message,true));
