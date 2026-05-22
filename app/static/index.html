@@ -3,67 +3,162 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OAuth 休眠</title>
+  <title>OAuth Sleeper 运维控制台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="__STYLE_CSS_URL__" />
 </head>
 <body>
-  <main class="wrap">
-    <header class="header">
-      <div>
-        <h1>OAuth 主动休眠</h1>
-        <p>达到总阈值后主动写入 Sub2API rate limit，让账号休眠到官方 reset 时间。</p>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brandBlock">
+        <p class="eyebrow">SUB2API SIDECAR</p>
+        <h1>OAuth Sleeper 运维控制台.</h1>
+        <p class="lede">监控 OAuth 用量窗口，在达到阈值时写入 Sub2API rate limit，让账号休眠到官方 reset 时间。</p>
       </div>
-      <button id="refreshBtn">刷新</button>
+      <div class="topbarActions">
+        <span id="enabledStat" class="statePill statePill--neutral">加载中</span>
+        <button id="refreshBtn" class="button button--secondary" type="button">刷新</button>
+      </div>
     </header>
 
-    <section class="grid cards">
-      <div class="card"><div class="label">启用</div><div id="enabledStat" class="value">-</div></div>
-      <div class="card"><div class="label">总阈值</div><div id="thresholdStat" class="value">-</div></div>
-      <div class="card"><div class="label">扫描间隔</div><div id="intervalStat" class="value">-</div></div>
-      <div class="card"><div class="label">上次扫描</div><div id="lastScanStat" class="value small">-</div></div>
-      <div class="card"><div class="label">上次触发</div><div id="triggeredStat" class="value">-</div></div>
-      <div class="card"><div class="label">休眠账号数</div><div id="sleepingCountStat" class="value">-</div></div>
+    <section class="statusBand" aria-label="扫描状态">
+      <div class="statusBand__main">
+        <span class="eyebrow">WRITE GUARD</span>
+        <h2 id="writeGuardTitle">正在读取配置</h2>
+        <p id="writeGuardText">页面会从插件 API 拉取当前状态。保存配置和立即扫描会影响 Sub2API 数据库字段。</p>
+      </div>
+      <div class="metricRail">
+        <div class="metric">
+          <span class="metric__label">阈值</span>
+          <strong id="thresholdStat">-</strong>
+        </div>
+        <div class="metric">
+          <span class="metric__label">扫描间隔</span>
+          <strong id="intervalStat">-</strong>
+        </div>
+        <div class="metric metric--wide">
+          <span class="metric__label">上次扫描</span>
+          <strong id="lastScanStat">-</strong>
+        </div>
+        <div class="metric">
+          <span class="metric__label">触发 / 扫描</span>
+          <strong id="triggeredStat">-</strong>
+        </div>
+        <div class="metric">
+          <span class="metric__label">休眠账号</span>
+          <strong id="sleepingCountStat">-</strong>
+        </div>
+      </div>
     </section>
 
-    <section class="panel">
-      <h2>配置</h2>
-      <div class="form">
-        <label class="check"><input id="enabled" type="checkbox" /> 启用主动休眠</label>
-        <label>总阈值 (%)<input id="threshold" type="number" min="1" max="100" step="0.1" /></label>
-        <label>扫描间隔 / 扫描间隙 (秒)<input id="interval" type="number" min="15" max="3600" step="1" /></label>
-        <label>每轮最多休眠账号数<input id="maxSleep" type="number" min="0" max="100" step="1" /></label>
-        <label class="check"><input id="includeOpenai" type="checkbox" /> OpenAI OAuth</label>
-        <label class="check"><input id="includeAnthropic" type="checkbox" /> Anthropic OAuth</label>
+    <section class="panel settingsPanel" aria-labelledby="settingsTitle">
+      <div class="panelHeader">
+        <div>
+          <p class="eyebrow">POLICY</p>
+          <h2 id="settingsTitle">扫描策略</h2>
+        </div>
+        <p class="panelNote">保存后会更新插件配置；立即扫描会立刻执行一次写库检查。</p>
       </div>
-      <div class="actions">
-        <button id="saveBtn">保存配置</button>
-        <button id="scanBtn" class="secondary">立即扫描一次</button>
+
+      <div class="settingsGrid">
+        <label class="switchField">
+          <input id="enabled" type="checkbox" />
+          <span>
+            <strong>启用主动休眠</strong>
+            <small>开启后定时扫描并在命中阈值时写入休眠字段。</small>
+          </span>
+        </label>
+
+        <label class="field">
+          <span>总阈值 (%)</span>
+          <input id="threshold" type="number" min="1" max="100" step="0.1" />
+        </label>
+
+        <label class="field">
+          <span>扫描间隔 (秒)</span>
+          <input id="interval" type="number" min="15" max="3600" step="1" />
+        </label>
+
+        <label class="field">
+          <span>每轮最多休眠账号数</span>
+          <input id="maxSleep" type="number" min="0" max="100" step="1" />
+        </label>
+
+        <fieldset class="platformScope">
+          <legend>平台范围</legend>
+          <label class="checkField"><input id="includeOpenai" type="checkbox" /> OpenAI OAuth</label>
+          <label class="checkField"><input id="includeAnthropic" type="checkbox" /> Anthropic OAuth</label>
+        </fieldset>
       </div>
-      <pre id="message"></pre>
+
+      <div class="actionRow">
+        <button id="saveBtn" class="button button--primary" type="button">保存配置</button>
+        <button id="scanBtn" class="button button--dangerGhost" type="button">立即扫描一次</button>
+        <p class="actionHint">扫描可能写入 <code>accounts.rate_limited_at</code> 和 <code>accounts.rate_limit_reset_at</code>。</p>
+      </div>
+      <div id="message" class="message" role="status" aria-live="polite"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel tablePanel" aria-labelledby="accountsTitle">
       <div class="sectionHead">
-        <h2>可休眠 OAuth 账号 <span id="accountsTotal" class="muted">加载中…</span></h2>
-        <div class="pager"><button id="accountsPrev" class="secondary" disabled>上一页</button><span id="accountsPageInfo">加载中…</span><button id="accountsNext" class="secondary" disabled>下一页</button></div>
+        <div>
+          <p class="eyebrow">ACCOUNTS</p>
+          <h2 id="accountsTitle">可休眠 OAuth 账号 <span id="accountsTotal" class="muted">加载中…</span></h2>
+        </div>
+        <div class="pager">
+          <button id="accountsPrev" class="button button--pager" type="button" disabled>上一页</button>
+          <span id="accountsPageInfo">加载中…</span>
+          <button id="accountsNext" class="button button--pager" type="button" disabled>下一页</button>
+        </div>
       </div>
-      <div class="tableWrap"><table><thead><tr><th>ID</th><th>账号</th><th>平台</th><th>状态</th><th>当前休眠到</th><th>白名单</th><th>操作</th></tr></thead><tbody id="accountsBody"></tbody></table></div>
+      <div class="tableWrap">
+        <table>
+          <thead><tr><th>ID</th><th>账号</th><th>平台</th><th>状态</th><th>当前休眠到</th><th>白名单</th><th>操作</th></tr></thead>
+          <tbody id="accountsBody"></tbody>
+        </table>
+      </div>
     </section>
 
-    <section class="panel">
+    <section class="panel tablePanel" aria-labelledby="sleepingTitle">
       <div class="sectionHead">
-        <h2>当前插件记录的休眠账号 <span id="sleepingTotal" class="muted">加载中…</span></h2>
-        <div class="pager"><button id="sleepingPrev" class="secondary" disabled>上一页</button><span id="sleepingPageInfo">加载中…</span><button id="sleepingNext" class="secondary" disabled>下一页</button></div>
+        <div>
+          <p class="eyebrow">SLEEPING</p>
+          <h2 id="sleepingTitle">插件记录的休眠账号 <span id="sleepingTotal" class="muted">加载中…</span></h2>
+        </div>
+        <div class="pager">
+          <button id="sleepingPrev" class="button button--pager" type="button" disabled>上一页</button>
+          <span id="sleepingPageInfo">加载中…</span>
+          <button id="sleepingNext" class="button button--pager" type="button" disabled>下一页</button>
+        </div>
       </div>
-      <div class="tableWrap"><table><thead><tr><th>ID</th><th>账号</th><th>平台</th><th>窗口</th><th>使用率</th><th>休眠到</th></tr></thead><tbody id="sleepingBody"></tbody></table></div>
+      <div class="tableWrap">
+        <table>
+          <thead><tr><th>ID</th><th>账号</th><th>平台</th><th>窗口</th><th>使用率</th><th>休眠到</th></tr></thead>
+          <tbody id="sleepingBody"></tbody>
+        </table>
+      </div>
     </section>
 
-    <section class="panel">
+    <section class="panel tablePanel" aria-labelledby="eventsTitle">
       <div class="sectionHead">
-        <h2>最近事件 <span id="eventsTotal" class="muted">加载中…</span></h2>
-        <div class="pager"><button id="eventsPrev" class="secondary" disabled>上一页</button><span id="eventsPageInfo">加载中…</span><button id="eventsNext" class="secondary" disabled>下一页</button></div>
+        <div>
+          <p class="eyebrow">AUDIT</p>
+          <h2 id="eventsTitle">最近事件 <span id="eventsTotal" class="muted">加载中…</span></h2>
+        </div>
+        <div class="pager">
+          <button id="eventsPrev" class="button button--pager" type="button" disabled>上一页</button>
+          <span id="eventsPageInfo">加载中…</span>
+          <button id="eventsNext" class="button button--pager" type="button" disabled>下一页</button>
+        </div>
       </div>
-      <div class="tableWrap"><table><thead><tr><th>时间</th><th>ID</th><th>账号</th><th>平台</th><th>窗口</th><th>使用率</th><th>阈值</th><th>休眠到</th></tr></thead><tbody id="eventsBody"></tbody></table></div>
+      <div class="tableWrap">
+        <table>
+          <thead><tr><th>时间</th><th>ID</th><th>账号</th><th>平台</th><th>窗口</th><th>使用率</th><th>阈值</th><th>休眠到</th></tr></thead>
+          <tbody id="eventsBody"></tbody>
+        </table>
+      </div>
     </section>
   </main>
   <script>
