@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 import sys
 
@@ -9,6 +10,7 @@ from app.config import Settings
 from app.ui import AdminRuntimeConfig, normalize_public_base_path, render_admin_html
 
 APP_JS = ROOT / "app" / "static" / "app.js"
+STYLE_CSS = ROOT / "app" / "static" / "style.css"
 
 
 def assert_equal(actual, expected, label: str) -> None:
@@ -24,6 +26,10 @@ def assert_contains(text: str, expected: str, label: str) -> None:
 def assert_not_contains(text: str, unexpected: str, label: str) -> None:
     if unexpected in text:
         raise AssertionError(f"{label}: did not expect to find {unexpected!r}")
+
+
+def asset_version(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
 
 
 def test_normalize_public_base_path() -> None:
@@ -84,6 +90,15 @@ def test_render_admin_html_for_path_mount() -> None:
     assert_not_contains(html, "__OAUTH_SLEEPER_RUNTIME_CONFIG__", "runtime placeholder replaced")
 
 
+def test_render_admin_html_uses_content_hashed_asset_versions() -> None:
+    html = render_admin_html("")
+    app_version = asset_version(APP_JS)
+    style_version = asset_version(STYLE_CSS)
+
+    assert_contains(html, f'/static/style.css?v={style_version}', "css cache buster tracks content")
+    assert_contains(html, f'/static/app.js?v={app_version}', "js cache buster tracks content")
+
+
 def test_frontend_source_uses_runtime_base_path() -> None:
     source = APP_JS.read_text(encoding="utf-8")
     assert_not_contains(source, "/custom/oauth-sleeper/", "hardcoded browser prefix removed")
@@ -101,6 +116,7 @@ if __name__ == "__main__":
         test_admin_runtime_config_for_path_mount,
         test_render_admin_html_for_direct_access,
         test_render_admin_html_for_path_mount,
+        test_render_admin_html_uses_content_hashed_asset_versions,
         test_frontend_source_uses_runtime_base_path,
     ]
     for test in tests:
