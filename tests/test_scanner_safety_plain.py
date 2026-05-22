@@ -23,9 +23,15 @@ class FakeSettings:
 
 
 class FakeScanStore:
-    def __init__(self, settings: FakeSettings, accounts: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        settings: FakeSettings,
+        accounts: list[dict[str, Any]],
+        whitelisted_ids: set[int] | None = None,
+    ) -> None:
         self.settings = settings
         self.accounts = accounts
+        self.whitelisted_ids = whitelisted_ids or set()
         self.updated_ids: list[int] = []
         self.inserted_events: list[SleeperEvent] = []
         self.last_scan_calls: list[tuple[int, int]] = []
@@ -36,6 +42,9 @@ class FakeScanStore:
 
     async def list_oauth_accounts(self, include_openai: bool, include_anthropic: bool) -> list[dict[str, Any]]:
         return self.accounts
+
+    async def list_whitelisted_account_ids(self) -> set[int]:
+        return self.whitelisted_ids
 
     async def set_rate_limited(self, account_id: int, reset_at: datetime) -> bool:
         self.updated_ids.append(account_id)
@@ -80,6 +89,7 @@ def dependencies(
     deps = scanner.ScanDependencies(
         get_settings=store.get_settings,
         list_oauth_accounts=store.list_oauth_accounts,
+        list_whitelisted_account_ids=store.list_whitelisted_account_ids,
         set_rate_limited=store.set_rate_limited,
         insert_event=store.insert_event,
         update_last_scan=store.update_last_scan,
@@ -142,6 +152,21 @@ def test_scan_once_with_dependencies_ignores_scheduler_refresh_failure() -> None
     assert_equal(deps.refresh_calls, [False], "refresh attempted once")  # type: ignore[attr-defined]
 
 
+def test_scan_once_with_dependencies_skips_whitelisted_accounts() -> None:
+    store = FakeScanStore(
+        FakeSettings(),
+        [account(1, 100), account(2, 99)],
+        whitelisted_ids={1},
+    )
+    deps = dependencies(store)
+
+    result = asyncio.run(scanner.scan_once_with_dependencies(force=True, deps=deps))
+
+    assert_equal(result.scanned, 2, "scanned includes whitelisted accounts")
+    assert_equal(result.triggered, 1, "trigger excludes whitelisted accounts")
+    assert_equal(store.updated_ids, [2], "only non-whitelisted account slept")
+
+
 def test_scan_once_with_dependencies_rolls_back_when_verify_fails() -> None:
     store = FakeScanStore(FakeSettings(), [account(1, 100)])
     deps = dependencies(store, refresh_result=True, verify_result=False)
@@ -163,6 +188,7 @@ if __name__ == "__main__":
         test_orders_by_highest_utilization_first,
         test_scan_once_with_dependencies_returns_zero_when_disabled_without_force,
         test_scan_once_with_dependencies_ignores_scheduler_refresh_failure,
+        test_scan_once_with_dependencies_skips_whitelisted_accounts,
         test_scan_once_with_dependencies_rolls_back_when_verify_fails,
     ]
     for test in tests:

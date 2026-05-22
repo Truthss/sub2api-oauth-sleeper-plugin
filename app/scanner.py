@@ -29,6 +29,7 @@ class Decision:
 class ScanDependencies:
     get_settings: Callable[[], Awaitable[Any]]
     list_oauth_accounts: Callable[[bool, bool], Awaitable[list[dict[str, Any]]]]
+    list_whitelisted_account_ids: Callable[[], Awaitable[set[int]]]
     set_rate_limited: Callable[[int, datetime], Awaitable[bool]]
     insert_event: Callable[[SleeperEvent], Awaitable[SleeperEvent]]
     update_last_scan: Callable[[int, int], Awaitable[None]]
@@ -199,6 +200,7 @@ def _production_scan_dependencies() -> ScanDependencies:
     return ScanDependencies(
         get_settings=repo.get_settings,
         list_oauth_accounts=repo.list_oauth_accounts,
+        list_whitelisted_account_ids=repo.list_whitelisted_account_ids,
         set_rate_limited=repo.set_rate_limited,
         insert_event=repo.insert_event,
         update_last_scan=repo.update_last_scan,
@@ -208,6 +210,12 @@ def _production_scan_dependencies() -> ScanDependencies:
         verify_model=_verify_sub2api_model,
         verify_after_sleep=lambda: _env_bool("VERIFY_AFTER_SLEEP", True),
     )
+
+
+def _filter_whitelisted_accounts(accounts: list[dict[str, Any]], whitelisted_ids: set[int]) -> list[dict[str, Any]]:
+    if not whitelisted_ids:
+        return accounts
+    return [account for account in accounts if int(account["id"]) not in whitelisted_ids]
 
 
 def _select_scan_candidates(
@@ -268,7 +276,9 @@ async def scan_once_with_dependencies(force: bool, deps: ScanDependencies) -> Sc
         return ScanResult(scanned=0, triggered=0, events=[])
 
     accounts = await deps.list_oauth_accounts(settings.include_openai, settings.include_anthropic)
-    selected = _select_scan_candidates(accounts, settings, deps.now())
+    whitelisted_ids = await deps.list_whitelisted_account_ids()
+    eligible_accounts = _filter_whitelisted_accounts(accounts, whitelisted_ids)
+    selected = _select_scan_candidates(eligible_accounts, settings, deps.now())
     updated_ids, events = await _apply_sleep_decisions(selected, settings, deps)
     deps.refresh_scheduler()
     if updated_ids and deps.verify_after_sleep():
