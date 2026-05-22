@@ -2,6 +2,8 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .ui import normalize_public_base_path
+
 
 class Settings(BaseSettings):
     database_url: str = Field(..., alias="DATABASE_URL")
@@ -14,6 +16,10 @@ class Settings(BaseSettings):
     public_base_path: str = Field("/custom/oauth-sleeper", alias="PUBLIC_BASE_PATH")
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
+
+    @property
+    def public_base_path_prefix(self) -> str:
+        return normalize_public_base_path(self.public_base_path)
 
 
 @lru_cache

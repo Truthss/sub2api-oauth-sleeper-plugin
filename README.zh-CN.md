@@ -150,7 +150,7 @@ SUB2API_DOCKER_NETWORK=<docker-network-that-can-reach-postgres>
 - `DEFAULT_SLEEP_THRESHOLD_PERCENT`：首次初始化插件配置表时写入的默认阈值；插件运行后以数据库表 `plugin_oauth_sleeper_settings` 为准。
 - `SCAN_INTERVAL_SECONDS`：首次初始化插件配置表时写入的默认扫描间隔；插件运行后以数据库表为准。
 - `INCLUDE_OPENAI` / `INCLUDE_ANTHROPIC`：首次初始化时是否启用对应平台扫描。
-- `PUBLIC_BASE_PATH`：浏览器访问插件时的外部路径。如果通过 `/custom/oauth-sleeper` 反代，就设为 `/custom/oauth-sleeper`；如果直接用 `http://host:port/admin`，可留空。
+- `PUBLIC_BASE_PATH`：浏览器访问插件时的外部路径。路径挂载访问用 `/custom/oauth-sleeper`；直连访问留空，例如 `http://127.0.0.1:8080/admin`。
 - `SUB2API_DOCKER_NETWORK`：插件容器加入的外部 Docker 网络，必须和 PostgreSQL 可互通。
 
 ### 部署策略
@@ -159,7 +159,8 @@ SUB2API_DOCKER_NETWORK=<docker-network-that-can-reach-postgres>
 - **真实库只读验收**：如果只是让用户看真实数据，建议禁用额外自动扫描，避免多个插件实例同时写同一个 `accounts` 表。
 - **生产启用**：确认只保留一个自动扫描实例连接真实库，再启用扫描。
 - **局域网访问**：如果用户要求从其他终端访问，可以在 compose 中临时加端口映射，例如 `0.0.0.0:18090:8080`，并确保防火墙仅允许可信网段。
-- **反代访问**：如果挂到 Caddy/Nginx 路径，必须同步设置 `PUBLIC_BASE_PATH`，否则前端 API/static 路径会错。
+- **直连访问**：发布宿主机端口并设置 `PUBLIC_BASE_PATH=`，前端直接走 `/admin` 和 `/api/*`。
+- **路径挂载访问**：如果挂到 Caddy/Nginx 路径，必须同步设置 `PUBLIC_BASE_PATH`，否则前端 API/static 路径会错。
 
 ### 验证清单
 
@@ -168,6 +169,8 @@ SUB2API_DOCKER_NETWORK=<docker-network-that-can-reach-postgres>
 ```bash
 docker compose ps
 NO_PROXY=127.0.0.1,localhost curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/api/status
+# 或路径挂载访问时：
 curl http://<lan-host-or-reverse-proxy>/custom/oauth-sleeper/api/status
 ```
 
@@ -217,7 +220,7 @@ PUBLIC_BASE_PATH=/custom/oauth-sleeper
 
 - `DATABASE_URL`：Sub2API PostgreSQL 数据库连接串。
 - `SUB2API_DOCKER_NETWORK`：插件要加入的 Docker 网络，必须能访问 PostgreSQL 容器。
-- `PUBLIC_BASE_PATH`：反代暴露给浏览器访问的路径。
+- `PUBLIC_BASE_PATH`：浏览器访问插件的基础路径。直连访问留空，路径挂载访问设为 `/custom/oauth-sleeper`。
 
 ### 3. 启动插件
 
@@ -237,7 +240,7 @@ docker compose ps
 curl http://127.0.0.1:8080/health
 ```
 
-注意：默认 `docker-compose.yml` 不暴露宿主机端口。生产环境建议通过已有 Caddy / Nginx 反代访问。
+注意：默认 `docker-compose.yml` 不暴露宿主机端口。可通过已有 Caddy / Nginx 路径挂载访问，也可显式加 `ports:` 做直连访问。
 
 如果当前 shell 配置了 `http_proxy` / `https_proxy`，本机健康检查要绕过代理：
 
@@ -279,13 +282,13 @@ PUBLIC_BASE_PATH=/custom/oauth-sleeper
 http://<your-lan-host>/custom/oauth-sleeper
 ```
 
-## 本地端口测试
+## 直连端口访问
 
-如果你只是本地测试，可以在 `docker-compose.yml` 里给服务加：
+如果要直连访问，可在 `docker-compose.yml` 里给服务加：
 
 ```yaml
 ports:
-  - "8088:8080"
+  - "8080:8080"
 ```
 
 然后 `.env` 设置：
@@ -297,7 +300,7 @@ PUBLIC_BASE_PATH=
 访问：
 
 ```text
-http://127.0.0.1:8088/admin
+http://127.0.0.1:8080/admin
 ```
 
 ## 配置项说明
@@ -311,7 +314,7 @@ http://127.0.0.1:8088/admin
 - `SCAN_INTERVAL_SECONDS`：首次初始化时的默认扫描间隔。
 - `INCLUDE_OPENAI`：首次初始化时是否扫描 OpenAI OAuth。
 - `INCLUDE_ANTHROPIC`：首次初始化时是否扫描 Anthropic OAuth。
-- `PUBLIC_BASE_PATH`：浏览器访问插件时使用的反代路径。
+- `PUBLIC_BASE_PATH`：浏览器访问插件时使用的基础路径。直连访问可留空；路径挂载访问设为 `/custom/oauth-sleeper`。
 - `SUB2API_DOCKER_NETWORK`：已有 Sub2API / PostgreSQL 所在的 Docker 网络。
 
 注意：首次启动后，运行时配置会保存到 `plugin_oauth_sleeper_settings` 表中，之后可以直接在插件页面修改。

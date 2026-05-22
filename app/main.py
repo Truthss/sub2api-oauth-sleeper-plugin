@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
@@ -12,6 +12,7 @@ from .db import init_db, close_db
 from .schemas import SettingsOut, SettingsUpdate, ScanResult, StatusOut, SleeperEventPage
 from . import repository as repo
 from . import scanner
+from .ui import render_admin_html
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -49,8 +50,8 @@ async def health():
 
 @app.get("/admin")
 async def admin_page():
-    return FileResponse(
-        STATIC_DIR / "index.html",
+    return HTMLResponse(
+        render_admin_html(get_settings().public_base_path_prefix),
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
 

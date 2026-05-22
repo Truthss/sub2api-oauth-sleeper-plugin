@@ -140,7 +140,7 @@ Configuration notes:
 - `DEFAULT_SLEEP_THRESHOLD_PERCENT`: initial threshold inserted only when plugin settings are first created. After startup, runtime settings live in `plugin_oauth_sleeper_settings`.
 - `SCAN_INTERVAL_SECONDS`: initial scan interval inserted only when plugin settings are first created. After startup, runtime settings live in the database.
 - `INCLUDE_OPENAI` / `INCLUDE_ANTHROPIC`: initial platform switches.
-- `PUBLIC_BASE_PATH`: public path used by the browser. Use `/custom/oauth-sleeper` for a path reverse proxy; leave empty for direct `http://host:port/admin` access.
+- `PUBLIC_BASE_PATH`: public path used by the browser. Use `/custom/oauth-sleeper` for path-mounted access; leave empty for direct access, for example `http://127.0.0.1:8080/admin`.
 - `SUB2API_DOCKER_NETWORK`: external Docker network the plugin joins; it must be able to reach PostgreSQL.
 
 ### Deployment strategy
@@ -149,7 +149,8 @@ Configuration notes:
 - **Real database UI validation**: if the goal is only to show real data, disable any extra automatic scan loop to avoid two plugin instances writing the same `accounts` table.
 - **Production enablement**: ensure only one automatic scanner points to the real database before enabling scanning.
 - **LAN access**: if the operator needs access from another device, add a temporary host-port mapping such as `0.0.0.0:18090:8080` and restrict it to trusted networks.
-- **Reverse proxy access**: when mounting under a Caddy/Nginx path, set `PUBLIC_BASE_PATH` to the same path or API/static URLs will break.
+- **Direct access**: publish a host port and set `PUBLIC_BASE_PATH=` so the UI and API use `/admin` and `/api/*` directly.
+- **Path-mounted access**: when mounting under a Caddy/Nginx path, set `PUBLIC_BASE_PATH` to the same path or API/static URLs will break.
 
 ### Verification checklist
 
@@ -158,6 +159,8 @@ After deployment, verify at least:
 ```bash
 docker compose ps
 NO_PROXY=127.0.0.1,localhost curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/api/status
+# or, when path-mounted behind Caddy/Nginx:
 curl http://<lan-host-or-reverse-proxy>/custom/oauth-sleeper/api/status
 ```
 
@@ -209,14 +212,14 @@ PUBLIC_BASE_PATH=/custom/oauth-sleeper
 docker compose up -d --build
 ```
 
-4. Check health from inside the Docker network or through your reverse proxy:
+4. Check health:
 
 ```bash
 docker compose ps
 curl http://127.0.0.1:8080/health
 ```
 
-The compose file does not publish a host port by default. Expose it through your existing reverse proxy, or add a `ports:` mapping for local testing.
+The compose file does not publish a host port by default. You can either expose it through your existing reverse proxy, or add a `ports:` mapping for direct host-port access.
 
 If your shell has `http_proxy` / `https_proxy` set, bypass proxies for local checks:
 
@@ -260,13 +263,13 @@ Open:
 http://<your-lan-host>/custom/oauth-sleeper
 ```
 
-### Direct testing with a host port
+### Direct access with a host port
 
-For local testing, you may add this to `docker-compose.yml`:
+For direct host-port access, you may add this to `docker-compose.yml`:
 
 ```yaml
 ports:
-  - "8088:8080"
+  - "8080:8080"
 ```
 
 Then set:
@@ -278,7 +281,7 @@ PUBLIC_BASE_PATH=
 Open:
 
 ```text
-http://127.0.0.1:8088/admin
+http://127.0.0.1:8080/admin
 ```
 
 ## Configuration
@@ -292,7 +295,7 @@ http://127.0.0.1:8088/admin
 - `SCAN_INTERVAL_SECONDS`: initial scan interval used only when plugin settings are first created.
 - `INCLUDE_OPENAI`: initial OpenAI scanning switch.
 - `INCLUDE_ANTHROPIC`: initial Anthropic scanning switch.
-- `PUBLIC_BASE_PATH`: public reverse-proxy path used by the web UI for API/static requests.
+- `PUBLIC_BASE_PATH`: browser base path used by the web UI for API/static requests. Leave empty for direct `http://127.0.0.1:8080/admin` access, or set `/custom/oauth-sleeper` for path-mounted access.
 - `SUB2API_DOCKER_NETWORK`: existing Docker network shared with Sub2API/PostgreSQL.
 
 After first startup, runtime settings are stored in `plugin_oauth_sleeper_settings` and can be changed from the UI.

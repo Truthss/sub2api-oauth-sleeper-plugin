@@ -3,15 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import socket
-import subprocess
-import urllib.error
 import urllib.request
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from . import repository as repo
+from . import scheduler_refresh
 from .schemas import ScanResult, SleeperEvent
 
 _scan_lock = asyncio.Lock()
@@ -24,6 +23,20 @@ class Decision:
     window_name: str
     utilization_percent: float
     reset_at: datetime
+
+
+@dataclass
+class ScanDependencies:
+    get_settings: Callable[[], Awaitable[Any]]
+    list_oauth_accounts: Callable[[bool, bool], Awaitable[list[dict[str, Any]]]]
+    set_rate_limited: Callable[[int, datetime], Awaitable[bool]]
+    insert_event: Callable[[SleeperEvent], Awaitable[SleeperEvent]]
+    update_last_scan: Callable[[int, int], Awaitable[None]]
+    rollback_sleeps: Callable[[list[int]], Awaitable[None]]
+    now: Callable[[], datetime]
+    refresh_scheduler: Callable[[], bool]
+    verify_model: Callable[[], bool]
+    verify_after_sleep: Callable[[], bool]
 
 
 def _now() -> datetime:
@@ -148,73 +161,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except Exception:
-        return default
-
-
-def _refresh_sub2api_scheduler(group_id: int = 2, platform: str = "openai", modes: tuple[str, ...] = ("single",)) -> None:
-    redis_host = os.getenv("SUB2API_REDIS_HOST", "redis")
-    redis_port = _env_int("SUB2API_REDIS_PORT", 6379)
-
-    def redis_command(*parts: str) -> str:
-        payload = "*" + str(len(parts)) + "\r\n" + "".join(f"${len(p.encode())}\r\n{p}\r\n" for p in parts)
-        with socket.create_connection((redis_host, redis_port), timeout=5) as sock:
-            sock.sendall(payload.encode())
-            sock.shutdown(socket.SHUT_WR)
-            return sock.recv(1024 * 1024).decode(errors="replace")
-
-    def parse_bulk(resp: str) -> str:
-        if not resp.startswith("$"):
-            return ""
-        _, rest = resp.split("\r\n", 1)
-        if rest.startswith("-1"):
-            return ""
-        return rest.split("\r\n", 1)[0]
-
-    def parse_array(resp: str) -> list[str]:
-        if not resp.startswith("*"):
-            return []
-        lines = resp.split("\r\n")
-        out: list[str] = []
-        i = 1
-        while i < len(lines):
-            if lines[i].startswith("$") and i + 1 < len(lines):
-                out.append(lines[i + 1])
-                i += 2
-            else:
-                i += 1
-        return out
-
-    keys_to_delete: list[str] = []
-    for mode in modes:
-        active_key = f"sched:active:{group_id}:{platform}:{mode}"
-        ver = parse_bulk(redis_command("GET", active_key))
-        keys_to_delete.extend([
-            active_key,
-            f"sched:ready:{group_id}:{platform}:{mode}",
-            f"sched:ver:{group_id}:{platform}:{mode}",
-            f"sched:lock:{group_id}:{platform}:{mode}",
-        ])
-        if ver:
-            keys_to_delete.append(f"sched:{group_id}:{platform}:{mode}:v{ver}")
-    cursor = "0"
-    pattern = f"sticky_session:{group_id}:{platform}:*"
-    while True:
-        resp = redis_command("SCAN", cursor, "MATCH", pattern, "COUNT", "100")
-        arr = parse_array(resp)
-        if not arr:
-            break
-        cursor = arr[0]
-        keys_to_delete.extend(arr[1:])
-        if cursor == "0":
-            break
-    if keys_to_delete:
-        redis_command("DEL", *keys_to_delete)
-
-
 def _verify_sub2api_model() -> bool:
     url = os.getenv("VERIFY_API_URL", "").strip()
     api_key = os.getenv("VERIFY_API_KEY", "").strip()
@@ -249,69 +195,90 @@ async def _rollback_sleeps(account_ids: list[int]) -> None:
         )
 
 
+def _production_scan_dependencies() -> ScanDependencies:
+    return ScanDependencies(
+        get_settings=repo.get_settings,
+        list_oauth_accounts=repo.list_oauth_accounts,
+        set_rate_limited=repo.set_rate_limited,
+        insert_event=repo.insert_event,
+        update_last_scan=repo.update_last_scan,
+        rollback_sleeps=_rollback_sleeps,
+        now=_now,
+        refresh_scheduler=scheduler_refresh.refresh_scheduler_if_enabled,
+        verify_model=_verify_sub2api_model,
+        verify_after_sleep=lambda: _env_bool("VERIFY_AFTER_SLEEP", True),
+    )
+
+
+def _select_scan_candidates(
+    accounts: list[dict[str, Any]],
+    settings: Any,
+    now: datetime,
+) -> list[tuple[dict[str, Any], Decision]]:
+    selected: list[tuple[dict[str, Any], Decision]] = []
+    if settings.include_openai:
+        selected.extend(
+            select_sleep_candidates(accounts, settings.threshold_percent, now, "openai", settings.max_sleep_per_scan)
+        )
+    if settings.include_anthropic:
+        selected.extend(
+            select_sleep_candidates(accounts, settings.threshold_percent, now, "anthropic", settings.max_sleep_per_scan)
+        )
+    return selected
+
+
+async def _apply_sleep_decisions(
+    selected: list[tuple[dict[str, Any], Decision]],
+    settings: Any,
+    deps: ScanDependencies,
+) -> tuple[list[int], list[SleeperEvent]]:
+    events: list[SleeperEvent] = []
+    updated_ids: list[int] = []
+    for account, decision in selected:
+        prev = account.get("rate_limit_reset_at")
+        updated = await deps.set_rate_limited(account["id"], decision.reset_at)
+        if not updated:
+            continue
+        updated_ids.append(account["id"])
+        event = await deps.insert_event(
+            SleeperEvent(
+                account_id=account["id"],
+                account_name=account.get("name"),
+                platform=account.get("platform") or "",
+                window_name=decision.window_name,
+                utilization_percent=decision.utilization_percent,
+                threshold_percent=settings.threshold_percent,
+                reset_at=decision.reset_at,
+                previous_rate_limit_reset_at=_time(prev),
+            )
+        )
+        events.append(event)
+    return updated_ids, events
+
+
 async def scan_once(force: bool = False) -> ScanResult:
     async with _scan_lock:
-        settings = await repo.get_settings()
-        if not settings.enabled and not force:
-            await repo.update_last_scan(0, 0)
-            return ScanResult(scanned=0, triggered=0, events=[])
-        accounts = await repo.list_oauth_accounts(settings.include_openai, settings.include_anthropic)
-        now = _now()
-        max_sleep_per_scan = settings.max_sleep_per_scan
-        selected: list[tuple[dict[str, Any], Decision]] = []
-        if settings.include_openai:
-            selected.extend(
-                select_sleep_candidates(
-                    accounts,
-                    settings.threshold_percent,
-                    now,
-                    "openai",
-                    max_sleep_per_scan,
-                )
-            )
-        if settings.include_anthropic:
-            selected.extend(
-                select_sleep_candidates(
-                    accounts,
-                    settings.threshold_percent,
-                    now,
-                    "anthropic",
-                    max_sleep_per_scan,
-                )
-            )
-        events: list[SleeperEvent] = []
-        updated_ids: list[int] = []
-        for account, decision in selected:
-            prev = account.get("rate_limit_reset_at")
-            updated = await repo.set_rate_limited(account["id"], decision.reset_at)
-            if not updated:
-                continue
-            updated_ids.append(account["id"])
-            event = await repo.insert_event(
-                SleeperEvent(
-                    account_id=account["id"],
-                    account_name=account.get("name"),
-                    platform=account.get("platform") or "",
-                    window_name=decision.window_name,
-                    utilization_percent=decision.utilization_percent,
-                    threshold_percent=settings.threshold_percent,
-                    reset_at=decision.reset_at,
-                    previous_rate_limit_reset_at=_time(prev),
-                )
-            )
-            events.append(event)
-        should_refresh = _env_bool("REFRESH_SUB2API_SCHEDULER", True)
-        group_id = _env_int("SUB2API_OPENAI_GROUP_ID", 2)
-        if should_refresh:
-            _refresh_sub2api_scheduler(group_id=group_id, platform="openai", modes=("single",))
-        if updated_ids and _env_bool("VERIFY_AFTER_SLEEP", True):
-            if not _verify_sub2api_model():
-                await _rollback_sleeps(updated_ids)
-                if should_refresh:
-                    _refresh_sub2api_scheduler(group_id=group_id, platform="openai", modes=("single",))
-                events = []
-        await repo.update_last_scan(len(accounts), len(events))
-        return ScanResult(scanned=len(accounts), triggered=len(events), events=events)
+        return await scan_once_with_dependencies(force=force, deps=_production_scan_dependencies())
+
+
+async def scan_once_with_dependencies(force: bool, deps: ScanDependencies) -> ScanResult:
+    settings = await deps.get_settings()
+    if not settings.enabled and not force:
+        await deps.update_last_scan(0, 0)
+        return ScanResult(scanned=0, triggered=0, events=[])
+
+    accounts = await deps.list_oauth_accounts(settings.include_openai, settings.include_anthropic)
+    selected = _select_scan_candidates(accounts, settings, deps.now())
+    updated_ids, events = await _apply_sleep_decisions(selected, settings, deps)
+    deps.refresh_scheduler()
+    if updated_ids and deps.verify_after_sleep():
+        if not deps.verify_model():
+            await deps.rollback_sleeps(updated_ids)
+            deps.refresh_scheduler()
+            events = []
+
+    await deps.update_last_scan(len(accounts), len(events))
+    return ScanResult(scanned=len(accounts), triggered=len(events), events=events)
 
 
 async def _loop() -> None:

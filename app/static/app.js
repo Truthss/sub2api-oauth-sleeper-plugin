@@ -2,13 +2,28 @@ const headers = () => ({ 'Content-Type': 'application/json' });
 const $ = id => document.getElementById(id);
 const PAGE_SIZE = 10;
 const state = { sleepingPage: 1, eventsPage: 1 };
-function rel(path){ return path.replace(/^\//, ''); }
+
+function normalizeBasePath(value){
+  const raw = String(value || '').trim();
+  if(!raw || raw === '/') return '';
+  const withSlash = raw.startsWith('/') ? raw : `/${raw}`;
+  return withSlash.replace(/\/+$/, '');
+}
+
+const runtimeConfig = window.__OAUTH_SLEEPER_CONFIG__ || {};
+const basePath = normalizeBasePath(runtimeConfig.basePath);
+
+function joinBasePath(path){
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return basePath ? `${basePath}${cleanPath}` : cleanPath;
+}
+
 function fmt(t){ return t ? new Date(t).toLocaleString() : '-'; }
 function pct(v){ return `${Number(v || 0).toFixed(2)}%`; }
 function esc(v){ return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 function msg(s, bad=false){ const el=$('message'); el.textContent=s; el.style.color=bad?'#b91c1c':'#065f46'; }
 async function api(path, opts={}){
-  const r = await fetch(`/custom/oauth-sleeper/${rel(path)}`, { ...opts, headers: { ...headers(), ...(opts.headers||{}) }});
+  const r = await fetch(joinBasePath(path), { ...opts, headers: { ...headers(), ...(opts.headers||{}) }});
   if(!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return await r.json();
 }

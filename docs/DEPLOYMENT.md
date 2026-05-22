@@ -77,7 +77,7 @@ Configuration notes:
 - `DEFAULT_SLEEP_THRESHOLD_PERCENT`: initial threshold inserted only when plugin settings are first created. After startup, runtime settings live in `plugin_oauth_sleeper_settings`.
 - `SCAN_INTERVAL_SECONDS`: initial scan interval inserted only when plugin settings are first created. After startup, runtime settings live in the database.
 - `INCLUDE_OPENAI` / `INCLUDE_ANTHROPIC`: initial platform switches.
-- `PUBLIC_BASE_PATH`: public path used by the browser. Use `/custom/oauth-sleeper` for a path reverse proxy; leave empty for direct `http://host:port/admin` access.
+- `PUBLIC_BASE_PATH`: public path used by the browser. Use `/custom/oauth-sleeper` for path-mounted access; leave empty for direct access, for example `http://127.0.0.1:8080/admin`.
 - `SUB2API_DOCKER_NETWORK`: external Docker network the plugin joins; it must be able to reach PostgreSQL.
 
 ### Deployment strategy
@@ -86,7 +86,8 @@ Configuration notes:
 - **Real database UI validation**: if the goal is only to show real data, disable any extra automatic scan loop to avoid two plugin instances writing the same `accounts` table.
 - **Production enablement**: ensure only one automatic scanner points to the real database before enabling scanning.
 - **LAN access**: if the operator needs access from another device, add a temporary host-port mapping such as `0.0.0.0:18090:8080` and restrict it to trusted networks.
-- **Reverse proxy access**: when mounting under a Caddy/Nginx path, set `PUBLIC_BASE_PATH` to the same path or API/static URLs will break.
+- **Direct access**: publish a host port and set `PUBLIC_BASE_PATH=` so the UI and API use `/admin` and `/api/*` directly.
+- **Path-mounted access**: when mounting under a Caddy/Nginx path, set `PUBLIC_BASE_PATH` to the same path or API/static URLs will break.
 
 ### Verification checklist
 
@@ -95,6 +96,8 @@ After deployment, verify at least:
 ```bash
 docker compose ps
 NO_PROXY=127.0.0.1,localhost curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/api/status
+# or, when path-mounted behind Caddy/Nginx:
 curl http://<lan-host-or-reverse-proxy>/custom/oauth-sleeper/api/status
 ```
 
@@ -121,9 +124,9 @@ Also confirm:
 1. Copy `.env.example` to `.env`.
 2. Set `DATABASE_URL` to your Sub2API PostgreSQL DSN.
 3. Set `SUB2API_DOCKER_NETWORK` to the Docker network shared by Sub2API/PostgreSQL.
-4. Set `PUBLIC_BASE_PATH` to the path where your reverse proxy exposes this plugin.
+4. Set `PUBLIC_BASE_PATH=` for direct host-port access, or set it to your mounted path (for example `/custom/oauth-sleeper`) when using path-mounted access.
 5. Start the plugin with `docker compose up -d --build`.
-6. Add reverse-proxy routes for the plugin path.
+6. If using path-mounted access, add reverse-proxy routes for the plugin path.
 7. Open the admin page and verify status before enabling scanning.
 
 ## Caddy route template
