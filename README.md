@@ -20,6 +20,7 @@ This project is intended for private LAN / trusted-admin deployments. It directl
 - Records plugin settings and trigger events in its own tables:
   - `plugin_oauth_sleeper_settings`
   - `plugin_oauth_sleeper_events`
+- Shows the currently manageable active OAuth accounts in the admin UI and lets operators whitelist specific account IDs so the plugin skips them during proactive sleep scans.
 
 ## What it does not do
 
@@ -310,7 +311,12 @@ No authentication is built in by default. Protect these endpoints at your revers
 - `GET /api/settings`
 - `PUT /api/settings`
 - `POST /api/scan-once`
+- `GET /api/accounts?page=1&page_size=10`
+- `POST /api/whitelist/{account_id}`
+- `DELETE /api/whitelist/{account_id}`
 - `GET /api/events?limit=50`
+
+Whitelist entries only affect future plugin sleep scans. They do not clear an existing `rate_limited_at` or `rate_limit_reset_at` value and do not change Sub2API's own rate-limit behavior.
 
 Example settings update:
 

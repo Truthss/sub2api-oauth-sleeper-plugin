@@ -26,6 +26,7 @@ Sub2API 主程序会基于这些字段识别账号处于限流/休眠状态。
 
 - `plugin_oauth_sleeper_settings`
 - `plugin_oauth_sleeper_events`
+- 在管理页展示当前可被插件管理的 active OAuth 账号及其 ID，并支持将指定账号 ID 加入白名单，使插件后续主动休眠扫描跳过这些账号。
 
 ## 它不会做什么
 
@@ -331,7 +332,12 @@ http://127.0.0.1:8080/admin
 - `GET /api/settings`
 - `PUT /api/settings`
 - `POST /api/scan-once`
+- `GET /api/accounts?page=1&page_size=10`
+- `POST /api/whitelist/{account_id}`
+- `DELETE /api/whitelist/{account_id}`
 - `GET /api/events?limit=50`
+
+白名单只影响后续插件主动休眠扫描，不会清空账号当前已有的 `rate_limited_at` 或 `rate_limit_reset_at`，也不会改变 Sub2API 自身的限流行为。
 
 示例：修改配置为开启、75% 阈值、30 秒扫描一次：
 
