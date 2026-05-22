@@ -91,16 +91,16 @@ async function scan(){
   msg(`扫描完成：扫描 ${r.scanned} 个，触发 ${r.triggered} 个`);
   state.accountsPage = 1; state.sleepingPage = 1; state.eventsPage = 1; await load();
 }
-async function addWhitelist(accountId){
+const addWhitelistAction = async accountId => {
   await api(`api/whitelist/${accountId}`, { method:'POST' });
   msg(`已加入白名单：账号 ID ${accountId}`);
   await Promise.all([loadStatus(), loadAccounts(), loadSleeping()]);
-}
-async function removeWhitelist(accountId){
+};
+const removeWhitelistAction = async accountId => {
   await api(`api/whitelist/${accountId}`, { method:'DELETE' });
   msg(`已移出白名单：账号 ID ${accountId}`);
   await Promise.all([loadStatus(), loadAccounts(), loadSleeping()]);
-}
+};
 $('refreshBtn').onclick = () => load().catch(e=>msg(e.message,true));
 $('saveBtn').onclick = () => save().catch(e=>msg(e.message,true));
 $('scanBtn').onclick = () => scan().catch(e=>msg(e.message,true));
@@ -110,6 +110,6 @@ $('sleepingPrev').onclick = () => { if(state.sleepingPage > 1){ state.sleepingPa
 $('sleepingNext').onclick = () => { state.sleepingPage++; loadSleeping().catch(e=>{ state.sleepingPage--; msg(e.message,true); }); };
 $('eventsPrev').onclick = () => { if(state.eventsPage > 1){ state.eventsPage--; loadEvents().catch(e=>msg(e.message,true)); } };
 $('eventsNext').onclick = () => { state.eventsPage++; loadEvents().catch(e=>{ state.eventsPage--; msg(e.message,true); }); };
-window.addWhitelist = accountId => addWhitelist(accountId).catch(e=>msg(e.message,true));
-window.removeWhitelist = accountId => removeWhitelist(accountId).catch(e=>msg(e.message,true));
+window.addWhitelist = accountId => addWhitelistAction(accountId).catch(e=>msg(e.message,true));
+window.removeWhitelist = accountId => removeWhitelistAction(accountId).catch(e=>msg(e.message,true));
 load().catch(e=>msg(e.message,true));
