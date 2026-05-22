@@ -44,6 +44,14 @@
 
     <section class="panel">
       <div class="sectionHead">
+        <h2>可休眠 OAuth 账号 <span id="accountsTotal" class="muted">加载中…</span></h2>
+        <div class="pager"><button id="accountsPrev" class="secondary" disabled>上一页</button><span id="accountsPageInfo">加载中…</span><button id="accountsNext" class="secondary" disabled>下一页</button></div>
+      </div>
+      <div class="tableWrap"><table><thead><tr><th>ID</th><th>账号</th><th>平台</th><th>状态</th><th>当前休眠到</th><th>白名单</th><th>操作</th></tr></thead><tbody id="accountsBody"></tbody></table></div>
+    </section>
+
+    <section class="panel">
+      <div class="sectionHead">
         <h2>当前插件记录的休眠账号 <span id="sleepingTotal" class="muted">加载中…</span></h2>
         <div class="pager"><button id="sleepingPrev" class="secondary" disabled>上一页</button><span id="sleepingPageInfo">加载中…</span><button id="sleepingNext" class="secondary" disabled>下一页</button></div>
       </div>

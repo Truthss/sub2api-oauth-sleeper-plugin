@@ -3,13 +3,13 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import init_db, close_db
-from .schemas import SettingsOut, SettingsUpdate, ScanResult, StatusOut, SleeperEventPage
+from .schemas import AccountPage, SettingsOut, SettingsUpdate, ScanResult, StatusOut, SleeperEventPage, WhitelistStatus
 from . import repository as repo
 from . import scanner
 from .ui import render_admin_html
@@ -89,6 +89,25 @@ async def put_settings_api(data: SettingsUpdate):
 @app.post("/api/scan-once", response_model=ScanResult)
 async def scan_once_api():
     return await scanner.scan_once(force=True)
+
+
+@app.get("/api/accounts", response_model=AccountPage)
+async def accounts_api(page: int = Query(default=1, ge=1), page_size: int = Query(default=10, ge=1, le=10)):
+    return await repo.list_accounts_page(page=page, page_size=page_size)
+
+
+@app.post("/api/whitelist/{account_id}", response_model=WhitelistStatus)
+async def add_whitelist_api(account_id: int):
+    ok = await repo.add_whitelist_account(account_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="account is not in the current manageable OAuth scan scope")
+    return WhitelistStatus(account_id=account_id, is_whitelisted=True)
+
+
+@app.delete("/api/whitelist/{account_id}", response_model=WhitelistStatus)
+async def remove_whitelist_api(account_id: int):
+    await repo.remove_whitelist_account(account_id)
+    return WhitelistStatus(account_id=account_id, is_whitelisted=False)
 
 
 @app.get("/api/events", response_model=SleeperEventPage)

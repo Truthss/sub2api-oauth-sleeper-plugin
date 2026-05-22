@@ -89,6 +89,8 @@ def test_frontend_source_uses_runtime_base_path() -> None:
     assert_not_contains(source, "/custom/oauth-sleeper/", "hardcoded browser prefix removed")
     assert_contains(source, "window.__OAUTH_SLEEPER_CONFIG__", "runtime config access")
     assert_contains(source, "joinBasePath(", "base-path join helper")
+    assert_contains(source, "api/accounts?page=", "accounts api uses relative runtime path")
+    assert_contains(source, "api/whitelist/", "whitelist api uses relative runtime path")
 
 
 if __name__ == "__main__":
