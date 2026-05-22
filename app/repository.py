@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from .db import pool
-from .schemas import PageMeta, SettingsOut, SettingsUpdate, SleeperEvent, SleeperEventPage
+from .schemas import AccountOut, AccountPage, PageMeta, SettingsOut, SettingsUpdate, SleeperEvent, SleeperEventPage
 
 
 def _f(v: Any) -> float | None:
@@ -35,6 +35,15 @@ def _event_from_record(r: Any) -> SleeperEvent:
         previous_rate_limit_reset_at=r.get("previous_rate_limit_reset_at"),
         created_at=r.get("created_at"),
     )
+
+
+def scanner_platforms(include_openai: bool, include_anthropic: bool) -> list[str]:
+    platforms: list[str] = []
+    if include_openai:
+        platforms.append("openai")
+    if include_anthropic:
+        platforms.append("anthropic")
+    return platforms
 
 
 async def get_settings() -> SettingsOut:
@@ -91,11 +100,7 @@ async def update_last_scan(scanned: int, triggered: int) -> None:
 
 
 async def list_oauth_accounts(include_openai: bool, include_anthropic: bool) -> list[dict[str, Any]]:
-    platforms: list[str] = []
-    if include_openai:
-        platforms.append("openai")
-    if include_anthropic:
-        platforms.append("anthropic")
+    platforms = scanner_platforms(include_openai, include_anthropic)
     if not platforms:
         return []
     async with pool().acquire() as conn:
@@ -121,6 +126,121 @@ async def list_oauth_accounts(include_openai: bool, include_anthropic: bool) -> 
                 extra = {}
         out.append({**dict(r), "extra": extra})
     return out
+
+
+def _account_from_record(r: Any) -> AccountOut:
+    return AccountOut(
+        id=r["id"],
+        name=r.get("name"),
+        platform=r["platform"],
+        status=r["status"],
+        type=r["type"],
+        rate_limit_reset_at=r.get("rate_limit_reset_at"),
+        is_whitelisted=bool(r.get("is_whitelisted")),
+    )
+
+
+async def list_accounts_page(page: int = 1, page_size: int = 10) -> AccountPage:
+    settings = await get_settings()
+    platforms = scanner_platforms(settings.include_openai, settings.include_anthropic)
+    page = max(1, page)
+    page_size = max(1, min(page_size, 10))
+    if not platforms:
+        return AccountPage(items=[], meta=_page_meta(0, page, page_size))
+
+    offset = (page - 1) * page_size
+    async with pool().acquire() as conn:
+        total = await conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM accounts
+            WHERE deleted_at IS NULL
+              AND status = 'active'
+              AND type = 'oauth'
+              AND platform = ANY($1::text[])
+            """,
+            platforms,
+        )
+        rows = await conn.fetch(
+            """
+            SELECT
+                a.id,
+                a.name,
+                a.platform,
+                a.status,
+                a.type,
+                a.rate_limit_reset_at,
+                (w.account_id IS NOT NULL) AS is_whitelisted
+            FROM accounts a
+            LEFT JOIN plugin_oauth_sleeper_whitelist w ON w.account_id = a.id
+            WHERE a.deleted_at IS NULL
+              AND a.status = 'active'
+              AND a.type = 'oauth'
+              AND a.platform = ANY($1::text[])
+            ORDER BY a.id
+            LIMIT $2 OFFSET $3
+            """,
+            platforms,
+            page_size,
+            offset,
+        )
+    return AccountPage(
+        items=[_account_from_record(r) for r in rows],
+        meta=_page_meta(int(total or 0), page, page_size),
+    )
+
+
+async def account_is_manageable(account_id: int) -> bool:
+    settings = await get_settings()
+    platforms = scanner_platforms(settings.include_openai, settings.include_anthropic)
+    if not platforms:
+        return False
+    async with pool().acquire() as conn:
+        found = await conn.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM accounts
+                WHERE id = $1
+                  AND deleted_at IS NULL
+                  AND status = 'active'
+                  AND type = 'oauth'
+                  AND platform = ANY($2::text[])
+            )
+            """,
+            account_id,
+            platforms,
+        )
+    return bool(found)
+
+
+async def add_whitelist_account(account_id: int) -> bool:
+    if not await account_is_manageable(account_id):
+        return False
+    async with pool().acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO plugin_oauth_sleeper_whitelist (account_id)
+            VALUES ($1)
+            ON CONFLICT (account_id) DO NOTHING
+            """,
+            account_id,
+        )
+    return True
+
+
+async def remove_whitelist_account(account_id: int) -> None:
+    async with pool().acquire() as conn:
+        await conn.execute(
+            "DELETE FROM plugin_oauth_sleeper_whitelist WHERE account_id = $1",
+            account_id,
+        )
+
+
+async def list_whitelisted_account_ids() -> set[int]:
+    async with pool().acquire() as conn:
+        rows = await conn.fetch("SELECT account_id FROM plugin_oauth_sleeper_whitelist")
+    return {int(r["account_id"]) for r in rows}
 
 
 async def set_rate_limited(account_id: int, reset_at: datetime) -> bool:

@@ -38,3 +38,11 @@ ON plugin_oauth_sleeper_events(created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_plugin_oauth_sleeper_events_account_id
 ON plugin_oauth_sleeper_events(account_id);
+
+CREATE TABLE IF NOT EXISTS plugin_oauth_sleeper_whitelist (
+    account_id BIGINT PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_plugin_oauth_sleeper_whitelist_created_at
+ON plugin_oauth_sleeper_whitelist(created_at DESC);

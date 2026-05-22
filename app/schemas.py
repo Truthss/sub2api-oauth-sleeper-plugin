@@ -29,6 +29,26 @@ class SleeperEventPage(BaseModel):
     meta: PageMeta
 
 
+class AccountOut(BaseModel):
+    id: int
+    name: str | None = None
+    platform: str
+    status: str
+    type: str
+    rate_limit_reset_at: datetime | None = None
+    is_whitelisted: bool = False
+
+
+class AccountPage(BaseModel):
+    items: list[AccountOut]
+    meta: PageMeta
+
+
+class WhitelistStatus(BaseModel):
+    account_id: int
+    is_whitelisted: bool
+
+
 class SettingsOut(BaseModel):
     enabled: bool
     threshold_percent: float
