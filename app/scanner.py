@@ -4,13 +4,14 @@ import asyncio
 import json
 import os
 import urllib.request
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from . import repository as repo
 from . import scheduler_refresh
+from .scan_store import RepositoryScanStore, ScanStore
 from .schemas import ScanResult, SleeperEvent
 
 _scan_lock = asyncio.Lock()
@@ -27,13 +28,7 @@ class Decision:
 
 @dataclass
 class ScanDependencies:
-    get_settings: Callable[[], Awaitable[Any]]
-    list_oauth_accounts: Callable[[bool, bool], Awaitable[list[dict[str, Any]]]]
-    list_whitelisted_account_ids: Callable[[], Awaitable[set[int]]]
-    set_rate_limited: Callable[[int, datetime], Awaitable[bool]]
-    insert_event: Callable[[SleeperEvent], Awaitable[SleeperEvent]]
-    update_last_scan: Callable[[int, int], Awaitable[None]]
-    rollback_sleeps: Callable[[list[int]], Awaitable[None]]
+    store: ScanStore
     now: Callable[[], datetime]
     refresh_scheduler: Callable[[], bool]
     verify_model: Callable[[], bool]
@@ -198,25 +193,12 @@ async def _rollback_sleeps(account_ids: list[int]) -> None:
 
 def _production_scan_dependencies() -> ScanDependencies:
     return ScanDependencies(
-        get_settings=repo.get_settings,
-        list_oauth_accounts=repo.list_oauth_accounts,
-        list_whitelisted_account_ids=repo.list_whitelisted_account_ids,
-        set_rate_limited=repo.set_rate_limited,
-        insert_event=repo.insert_event,
-        update_last_scan=repo.update_last_scan,
-        rollback_sleeps=_rollback_sleeps,
+        store=RepositoryScanStore(rollback_sleeps_impl=_rollback_sleeps),
         now=_now,
         refresh_scheduler=scheduler_refresh.refresh_scheduler_if_enabled,
         verify_model=_verify_sub2api_model,
         verify_after_sleep=lambda: _env_bool("VERIFY_AFTER_SLEEP", True),
     )
-
-
-def _filter_whitelisted_accounts(accounts: list[dict[str, Any]], whitelisted_ids: set[int]) -> list[dict[str, Any]]:
-    if not whitelisted_ids:
-        return accounts
-    return [account for account in accounts if int(account["id"]) not in whitelisted_ids]
-
 
 def _select_scan_candidates(
     accounts: list[dict[str, Any]],
@@ -238,17 +220,17 @@ def _select_scan_candidates(
 async def _apply_sleep_decisions(
     selected: list[tuple[dict[str, Any], Decision]],
     settings: Any,
-    deps: ScanDependencies,
+    store: ScanStore,
 ) -> tuple[list[int], list[SleeperEvent]]:
     events: list[SleeperEvent] = []
     updated_ids: list[int] = []
     for account, decision in selected:
         prev = account.get("rate_limit_reset_at")
-        updated = await deps.set_rate_limited(account["id"], decision.reset_at)
+        updated = await store.set_rate_limited(account["id"], decision.reset_at)
         if not updated:
             continue
         updated_ids.append(account["id"])
-        event = await deps.insert_event(
+        event = await store.insert_event(
             SleeperEvent(
                 account_id=account["id"],
                 account_name=account.get("name"),
@@ -270,25 +252,23 @@ async def scan_once(force: bool = False) -> ScanResult:
 
 
 async def scan_once_with_dependencies(force: bool, deps: ScanDependencies) -> ScanResult:
-    settings = await deps.get_settings()
+    settings = await deps.store.get_settings()
     if not settings.enabled and not force:
-        await deps.update_last_scan(0, 0)
+        await deps.store.finish_scan(0, 0)
         return ScanResult(scanned=0, triggered=0, events=[])
 
-    accounts = await deps.list_oauth_accounts(settings.include_openai, settings.include_anthropic)
-    whitelisted_ids = await deps.list_whitelisted_account_ids()
-    eligible_accounts = _filter_whitelisted_accounts(accounts, whitelisted_ids)
-    selected = _select_scan_candidates(eligible_accounts, settings, deps.now())
-    updated_ids, events = await _apply_sleep_decisions(selected, settings, deps)
+    account_batch = await deps.store.list_scan_account_batch(settings)
+    selected = _select_scan_candidates(account_batch.eligible_accounts, settings, deps.now())
+    updated_ids, events = await _apply_sleep_decisions(selected, settings, deps.store)
     deps.refresh_scheduler()
     if updated_ids and deps.verify_after_sleep():
         if not deps.verify_model():
-            await deps.rollback_sleeps(updated_ids)
+            await deps.store.rollback_sleeps(updated_ids)
             deps.refresh_scheduler()
             events = []
 
-    await deps.update_last_scan(len(accounts), len(events))
-    return ScanResult(scanned=len(accounts), triggered=len(events), events=events)
+    await deps.store.finish_scan(account_batch.scanned_count, len(events))
+    return ScanResult(scanned=account_batch.scanned_count, triggered=len(events), events=events)
 
 
 async def _loop() -> None:

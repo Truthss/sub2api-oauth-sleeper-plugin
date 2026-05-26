@@ -5,6 +5,7 @@ import os
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 logger = logging.getLogger(__name__)
 RefreshAdapter = Callable[[int, str, tuple[str, ...]], None]
@@ -15,6 +16,76 @@ class RefreshRequest:
     group_id: int
     platform: str
     modes: tuple[str, ...]
+
+
+class RedisCommandPort(Protocol):
+    def get(self, key: str) -> str:
+        ...
+
+    def scan(self, cursor: str, match: str, count: int) -> tuple[str, list[str]]:
+        ...
+
+    def delete(self, keys: list[str]) -> None:
+        ...
+
+
+@dataclass(frozen=True)
+class SchedulerRefreshPlan:
+    keys_to_delete: list[str]
+
+    def apply(self, port: RedisCommandPort) -> None:
+        if self.keys_to_delete:
+            port.delete(self.keys_to_delete)
+
+
+class SocketRedisPort:
+    def __init__(self, host: str, port: int, timeout: int = 5) -> None:
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+
+    def get(self, key: str) -> str:
+        return _parse_bulk(self._command("GET", key))
+
+    def scan(self, cursor: str, match: str, count: int) -> tuple[str, list[str]]:
+        values = _parse_array(self._command("SCAN", cursor, "MATCH", match, "COUNT", str(count)))
+        if not values:
+            return "0", []
+        return values[0], values[1:]
+
+    def delete(self, keys: list[str]) -> None:
+        self._command("DEL", *keys)
+
+    def _command(self, *parts: str) -> str:
+        payload = "*" + str(len(parts)) + "\r\n" + "".join(f"${len(p.encode())}\r\n{p}\r\n" for p in parts)
+        with socket.create_connection((self.host, self.port), timeout=self.timeout) as sock:
+            sock.sendall(payload.encode())
+            sock.shutdown(socket.SHUT_WR)
+            return sock.recv(1024 * 1024).decode(errors="replace")
+
+
+def _parse_bulk(resp: str) -> str:
+    if not resp.startswith("$"):
+        return ""
+    _, rest = resp.split("\r\n", 1)
+    if rest.startswith("-1"):
+        return ""
+    return rest.split("\r\n", 1)[0]
+
+
+def _parse_array(resp: str) -> list[str]:
+    if not resp.startswith("*"):
+        return []
+    lines = resp.split("\r\n")
+    out: list[str] = []
+    i = 1
+    while i < len(lines):
+        if lines[i].startswith("$") and i + 1 < len(lines):
+            out.append(lines[i + 1])
+            i += 2
+        else:
+            i += 1
+    return out
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -57,6 +128,31 @@ def refresh_scheduler_if_enabled(adapter: RefreshAdapter | None = None) -> bool:
     return refresh_scheduler(request, adapter or refresh_sub2api_scheduler)
 
 
+def build_scheduler_refresh_plan(request: RefreshRequest, port: RedisCommandPort) -> SchedulerRefreshPlan:
+    keys_to_delete: list[str] = []
+    for mode in request.modes:
+        active_key = f"sched:active:{request.group_id}:{request.platform}:{mode}"
+        version = port.get(active_key)
+        keys_to_delete.extend([
+            active_key,
+            f"sched:ready:{request.group_id}:{request.platform}:{mode}",
+            f"sched:ver:{request.group_id}:{request.platform}:{mode}",
+            f"sched:lock:{request.group_id}:{request.platform}:{mode}",
+        ])
+        if version:
+            keys_to_delete.append(f"sched:{request.group_id}:{request.platform}:{mode}:v{version}")
+
+    cursor = "0"
+    pattern = f"sticky_session:{request.group_id}:{request.platform}:*"
+    while True:
+        cursor, keys = port.scan(cursor, pattern, 100)
+        keys_to_delete.extend(keys)
+        if cursor == "0":
+            break
+
+    return SchedulerRefreshPlan(keys_to_delete=keys_to_delete)
+
+
 def refresh_sub2api_scheduler(
     group_id: int = 2,
     platform: str = "openai",
@@ -64,58 +160,6 @@ def refresh_sub2api_scheduler(
 ) -> None:
     redis_host = os.getenv("SUB2API_REDIS_HOST", "redis")
     redis_port = _env_int("SUB2API_REDIS_PORT", 6379)
-
-    def redis_command(*parts: str) -> str:
-        payload = "*" + str(len(parts)) + "\r\n" + "".join(f"${len(p.encode())}\r\n{p}\r\n" for p in parts)
-        with socket.create_connection((redis_host, redis_port), timeout=5) as sock:
-            sock.sendall(payload.encode())
-            sock.shutdown(socket.SHUT_WR)
-            return sock.recv(1024 * 1024).decode(errors="replace")
-
-    def parse_bulk(resp: str) -> str:
-        if not resp.startswith("$"):
-            return ""
-        _, rest = resp.split("\r\n", 1)
-        if rest.startswith("-1"):
-            return ""
-        return rest.split("\r\n", 1)[0]
-
-    def parse_array(resp: str) -> list[str]:
-        if not resp.startswith("*"):
-            return []
-        lines = resp.split("\r\n")
-        out: list[str] = []
-        i = 1
-        while i < len(lines):
-            if lines[i].startswith("$") and i + 1 < len(lines):
-                out.append(lines[i + 1])
-                i += 2
-            else:
-                i += 1
-        return out
-
-    keys_to_delete: list[str] = []
-    for mode in modes:
-        active_key = f"sched:active:{group_id}:{platform}:{mode}"
-        ver = parse_bulk(redis_command("GET", active_key))
-        keys_to_delete.extend([
-            active_key,
-            f"sched:ready:{group_id}:{platform}:{mode}",
-            f"sched:ver:{group_id}:{platform}:{mode}",
-            f"sched:lock:{group_id}:{platform}:{mode}",
-        ])
-        if ver:
-            keys_to_delete.append(f"sched:{group_id}:{platform}:{mode}:v{ver}")
-    cursor = "0"
-    pattern = f"sticky_session:{group_id}:{platform}:*"
-    while True:
-        resp = redis_command("SCAN", cursor, "MATCH", pattern, "COUNT", "100")
-        arr = parse_array(resp)
-        if not arr:
-            break
-        cursor = arr[0]
-        keys_to_delete.extend(arr[1:])
-        if cursor == "0":
-            break
-    if keys_to_delete:
-        redis_command("DEL", *keys_to_delete)
+    request = RefreshRequest(group_id=group_id, platform=platform, modes=modes)
+    port = SocketRedisPort(redis_host, redis_port)
+    build_scheduler_refresh_plan(request, port).apply(port)

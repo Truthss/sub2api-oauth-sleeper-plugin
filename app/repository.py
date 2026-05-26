@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from .account_scope import AccountScanBatch, account_scope_from_settings, filter_whitelisted_accounts
 from .db import pool
 from .schemas import AccountOut, AccountPage, PageMeta, SettingsOut, SettingsUpdate, SleeperEvent, SleeperEventPage
 
@@ -38,12 +39,15 @@ def _event_from_record(r: Any) -> SleeperEvent:
 
 
 def scanner_platforms(include_openai: bool, include_anthropic: bool) -> list[str]:
-    platforms: list[str] = []
-    if include_openai:
-        platforms.append("openai")
-    if include_anthropic:
-        platforms.append("anthropic")
-    return platforms
+    return list(
+        account_scope_from_settings(
+            type(
+                "ScopeSettings",
+                (),
+                {"include_openai": include_openai, "include_anthropic": include_anthropic},
+            )()
+        ).platforms
+    )
 
 
 async def get_settings() -> SettingsOut:
@@ -241,6 +245,15 @@ async def list_whitelisted_account_ids() -> set[int]:
     async with pool().acquire() as conn:
         rows = await conn.fetch("SELECT account_id FROM plugin_oauth_sleeper_whitelist")
     return {int(r["account_id"]) for r in rows}
+
+
+async def list_scan_account_batch(settings: Any) -> AccountScanBatch:
+    accounts = await list_oauth_accounts(settings.include_openai, settings.include_anthropic)
+    whitelisted_ids = await list_whitelisted_account_ids()
+    return AccountScanBatch(
+        scanned_count=len(accounts),
+        eligible_accounts=filter_whitelisted_accounts(accounts, whitelisted_ids),
+    )
 
 
 async def set_rate_limited(account_id: int, reset_at: datetime) -> bool:

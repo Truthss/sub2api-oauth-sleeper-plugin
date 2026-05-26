@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.account_scope import AccountScanBatch, filter_whitelisted_accounts
 from app import scanner
 from app.schemas import SleeperEvent
 
@@ -35,16 +36,17 @@ class FakeScanStore:
         self.updated_ids: list[int] = []
         self.inserted_events: list[SleeperEvent] = []
         self.last_scan_calls: list[tuple[int, int]] = []
+        self.finished_scans: list[tuple[int, int]] = []
         self.rollback_calls: list[list[int]] = []
 
     async def get_settings(self) -> FakeSettings:
         return self.settings
 
-    async def list_oauth_accounts(self, include_openai: bool, include_anthropic: bool) -> list[dict[str, Any]]:
-        return self.accounts
-
-    async def list_whitelisted_account_ids(self) -> set[int]:
-        return self.whitelisted_ids
+    async def list_scan_account_batch(self, settings: FakeSettings) -> AccountScanBatch:
+        return AccountScanBatch(
+            scanned_count=len(self.accounts),
+            eligible_accounts=filter_whitelisted_accounts(self.accounts, self.whitelisted_ids),
+        )
 
     async def set_rate_limited(self, account_id: int, reset_at: datetime) -> bool:
         self.updated_ids.append(account_id)
@@ -54,8 +56,9 @@ class FakeScanStore:
         self.inserted_events.append(event)
         return event
 
-    async def update_last_scan(self, scanned: int, triggered: int) -> None:
+    async def finish_scan(self, scanned: int, triggered: int) -> None:
         self.last_scan_calls.append((scanned, triggered))
+        self.finished_scans.append((scanned, triggered))
 
     async def rollback_sleeps(self, account_ids: list[int]) -> None:
         self.rollback_calls.append(account_ids)
@@ -87,13 +90,7 @@ def dependencies(
         return refresh_result
 
     deps = scanner.ScanDependencies(
-        get_settings=store.get_settings,
-        list_oauth_accounts=store.list_oauth_accounts,
-        list_whitelisted_account_ids=store.list_whitelisted_account_ids,
-        set_rate_limited=store.set_rate_limited,
-        insert_event=store.insert_event,
-        update_last_scan=store.update_last_scan,
-        rollback_sleeps=store.rollback_sleeps,
+        store=store,
         now=lambda: datetime(2026, 5, 16, tzinfo=timezone.utc),
         refresh_scheduler=refresh_scheduler,
         verify_model=lambda: verify_result,
@@ -165,6 +162,7 @@ def test_scan_once_with_dependencies_skips_whitelisted_accounts() -> None:
     assert_equal(result.scanned, 2, "scanned includes whitelisted accounts")
     assert_equal(result.triggered, 1, "trigger excludes whitelisted accounts")
     assert_equal(store.updated_ids, [2], "only non-whitelisted account slept")
+    assert_equal(store.finished_scans, [(2, 1)], "scan finish recorded through store")
 
 
 def test_scan_once_with_dependencies_rolls_back_when_verify_fails() -> None:

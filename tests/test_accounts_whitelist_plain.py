@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.repository import scanner_platforms
+from app.account_scope import AccountScanScope
 from app.schemas import AccountOut, AccountPage, PageMeta, WhitelistStatus
 
 
@@ -56,11 +56,11 @@ def test_whitelist_status_shape() -> None:
     assert_equal(status.is_whitelisted, False, "status whitelist flag")
 
 
-def test_scanner_platforms_respects_settings_switches() -> None:
-    assert_equal(scanner_platforms(True, True), ["openai", "anthropic"], "both platforms")
-    assert_equal(scanner_platforms(True, False), ["openai"], "openai only")
-    assert_equal(scanner_platforms(False, True), ["anthropic"], "anthropic only")
-    assert_equal(scanner_platforms(False, False), [], "no platforms")
+def test_account_scan_scope_respects_settings_switches() -> None:
+    assert_equal(AccountScanScope(True, True).platforms, ("openai", "anthropic"), "both platforms")
+    assert_equal(AccountScanScope(True, False).platforms, ("openai",), "openai only")
+    assert_equal(AccountScanScope(False, True).platforms, ("anthropic",), "anthropic only")
+    assert_equal(AccountScanScope(False, False).platforms, (), "no platforms")
 
 
 if __name__ == "__main__":
@@ -68,7 +68,7 @@ if __name__ == "__main__":
         test_account_out_exposes_whitelist_fields,
         test_account_page_wraps_items_and_meta,
         test_whitelist_status_shape,
-        test_scanner_platforms_respects_settings_switches,
+        test_account_scan_scope_respects_settings_switches,
     ]
     for test in tests:
         try:
